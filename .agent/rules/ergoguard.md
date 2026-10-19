@@ -1,0 +1,6 @@
+- Vanilla JS (ES modules) only in frontend/, ai/, engine/. No frameworks, no new dependencies without asking.
+- Only edit files inside the folder I name in the task. Never edit contracts/ without asking.
+- All data shapes come from contracts/*.schema.json. Do not invent fields.
+- Engine code has no DOM access. Use the event bus.
+- Keep code minimal. Every non-trivial function gets a one-line "why" comment.
+- After each task, write a plain-language walkthrough: what it does, the formula or algorithm used, and what could break.
