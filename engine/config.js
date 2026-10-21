@@ -29,6 +29,8 @@ export const CONFIG = {
     UnsafePosture: { base: 40 },
     MissingHardhat: { base: 55 },
     MissingVest: { base: 35 },
+    Fatigue: { base: 45 },
+    WorkerFatigue: { base: 45 },
   },
 
   // Score threshold boundaries classifying violation severity into Low, Medium, High, and Critical.
@@ -37,6 +39,29 @@ export const CONFIG = {
     Medium: 25,
     High: 50,
     Critical: 75,
+  },
+
+  // Severity classification hysteresis deadband margin to prevent oscillation
+  severityHysteresis: 5,
+
+  // Temporal windows in milliseconds (derived from 30 FPS defaults)
+  timing: {
+    onsetDebounceMs: 167,    // ~5 frames @ 30 FPS
+    gracePeriodMs: 500,      // ~15 frames @ 30 FPS
+    cooldownMs: 15000,       // 15 seconds cooldown for duplicate alerts
+    fallConfirmationMs: 333, // 10 frames @ 30 FPS
+    fallRecoveryTimeoutMs: 5000, // 5.0s on floor before emergency
+    fatigueDwellMs: 2000,    // 60 frames @ 30 FPS (2.0s)
+    immobilityMs: 15000,     // 15.0s immobility threshold
+    riskUpdateIntervalMs: 200, // 5 Hz max update rate (200ms)
+  },
+
+  // Fall detection thresholds
+  fall: {
+    aspectRatioThreshold: 0.85,
+    torsoAngleThresholdDeg: 30.0,
+    // Vertical descent velocity normalized by person bounding box height over 133ms (~4 frames)
+    normalizedVelocityThreshold: 0.08,
   },
 };
 

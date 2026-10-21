@@ -1,6 +1,13 @@
+---
+trigger: always_on
+---
+
 - Vanilla JS (ES modules) only in frontend/, ai/, engine/. No frameworks, no new dependencies without asking.
 - Only edit files inside the folder I name in the task. Never edit contracts/ without asking.
 - All data shapes come from contracts/*.schema.json. Do not invent fields.
 - Engine code has no DOM access. Use the event bus.
 - Keep code minimal. Every non-trivial function gets a one-line "why" comment.
 - After each task, write a plain-language walkthrough: what it does, the formula or algorithm used, and what could break.
+- Zero-backend: no server, no FastAPI, no cloud calls. Storage is IndexedDB via Dexie.js; export is CSV/jsPDF.
+- Stack: Vanilla JS, Bootstrap 5, HTML5 Canvas. AI = MediaPipe Pose + YOLOv8 via ONNX Runtime Web in Web Workers.
+- Engine code must run inside a Web Worker (no DOM access).
