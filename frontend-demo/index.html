@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ErgoGuard-AI | Browser-Local Workplace Safety & Ergonomics Intelligence</title>
+  <link rel="stylesheet" href="./vendor/bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="./style.css">
+  <link rel="manifest" href="./manifest.json">
+</head>
+<body class="bg-dark text-light">
+
+  <!-- Top Header & Model Status Navbar -->
+  <header class="navbar navbar-expand-lg navbar-dark border-bottom border-secondary px-3 py-2 bg-slate-900 sticky-top">
+    <div class="container-fluid d-flex flex-wrap justify-content-between align-items-center">
+      <div class="d-flex align-items-center gap-2">
+        <span class="fs-4 fw-bold text-primary">🛡️ ErgoGuard-AI</span>
+        <span class="badge bg-secondary text-uppercase tracking-wider">Edge AI Vision Harness</span>
+      </div>
+
+      <!-- Real-time Status Pills -->
+      <div class="d-flex flex-wrap align-items-center gap-2 mt-2 mt-lg-0">
+        <!-- Pose Model Status -->
+        <span id="badgePoseState" class="badge bg-info-subtle text-info border border-info" title="MediaPipe Pose Lite Landmarker">
+          Pose: Loading...
+        </span>
+
+        <!-- PPE Model Status -->
+        <span id="badgePpeState" class="badge bg-warning-subtle text-warning border border-warning" title="YOLOv8 ONNX PPE Detector">
+          PPE: Checking...
+        </span>
+
+        <!-- Storage Status -->
+        <span id="badgeStorageState" class="badge bg-secondary border border-secondary" title="Dexie.js IndexedDB persistence">
+          IndexedDB: Initializing
+        </span>
+
+        <!-- Offline Status -->
+        <span id="badgeOfflineState" class="badge bg-secondary border border-secondary" title="Service Worker Offline Cache">
+          Offline: Syncing
+        </span>
+
+        <!-- Privacy Guarantee -->
+        <div class="privacy-badge d-flex align-items-center gap-1 text-success bg-dark border border-success-subtle px-2 py-1 rounded small" title="All processing occurs locally in the browser. Zero video or biometric frames leave this machine.">
+          <span>🔒</span>
+          <strong style="font-size: 0.75rem;">100% On-Device</strong>
+        </div>
+
+        <button id="btnOpenHistory" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#historyModal" title="View IndexedDB inspection history">
+          📋 History
+        </button>
+
+        <button id="btnResetEngine" class="btn btn-outline-warning btn-sm" title="Clear tracking history and reset engine state">
+          ↺ Reset Engine
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="container-fluid py-3 px-3">
+    <!-- Notice Banner -->
+    <div class="alert alert-dark border-secondary d-flex flex-wrap justify-content-between align-items-center py-2 px-3 mb-3">
+      <div class="small text-muted">
+        <strong class="text-info">Browser-Local Pipeline:</strong> Real-time frame processing via <code>MediaPipe Pose Lite (Local)</code> and <code>engine/riskEngine.js</code>. No cloud servers, no remote inference.
+      </div>
+      <div class="d-flex gap-2 align-items-center mt-1 mt-md-0">
+        <span id="pipelineStatusMsg" class="badge bg-success-subtle text-success border border-success">STANDBY</span>
+      </div>
+    </div>
+
+    <!-- Top KPI Row -->
+    <div class="row g-3 mb-3">
+      <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card bg-slate-800 border-secondary h-100 shadow-sm">
+          <div class="card-body py-2 px-3">
+            <div class="text-secondary small text-uppercase fw-bold">Overall Risk Score</div>
+            <div class="d-flex align-items-baseline justify-content-between mt-1">
+              <span id="kpiOverallScore" class="fs-2 fw-bold text-success">0</span>
+              <span class="text-muted small">/ 100</span>
+            </div>
+            <div class="progress mt-2" style="height: 6px;">
+              <div id="kpiScoreBar" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card bg-slate-800 border-secondary h-100 shadow-sm">
+          <div class="card-body py-2 px-3">
+            <div class="text-secondary small text-uppercase fw-bold">Severity Tier</div>
+            <div class="d-flex align-items-center justify-content-between mt-1">
+              <span id="kpiSeverity" class="badge bg-success fs-6 px-3 py-2">LOW</span>
+              <small id="kpiHysteresisNote" class="text-muted" style="font-size: 0.75rem;">Hysteresis: ±5</small>
+            </div>
+            <small class="text-muted d-block mt-2">Dynamic threshold deadband</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card bg-slate-800 border-secondary h-100 shadow-sm">
+          <div class="card-body py-2 px-3">
+            <div class="text-secondary small text-uppercase fw-bold">Workers Monitored</div>
+            <div class="d-flex align-items-baseline justify-content-between mt-1">
+              <span id="kpiWorkerCount" class="fs-2 fw-bold text-light">0</span>
+              <span class="text-muted small">Active Tracks</span>
+            </div>
+            <small class="text-muted d-block mt-2">Track ID persistence</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card bg-slate-800 border-secondary h-100 shadow-sm">
+          <div class="card-body py-2 px-3">
+            <div class="text-secondary small text-uppercase fw-bold">Active Incidents</div>
+            <div class="d-flex align-items-baseline justify-content-between mt-1">
+              <span id="kpiActiveIncidents" class="fs-2 fw-bold text-success">0</span>
+              <span id="kpiDebounceState" class="badge bg-secondary-subtle text-secondary small">0 debouncing</span>
+            </div>
+            <small class="text-muted d-block mt-2">Onset debounce ~167ms</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="row g-3">
+      <!-- Left Column: Camera Preview & Test Data Harness -->
+      <div class="col-12 col-lg-6">
+        <div class="card bg-slate-800 border-secondary mb-3 shadow-sm">
+          <div class="card-header bg-slate-900 border-secondary d-flex justify-content-between align-items-center py-2">
+            <span class="fw-semibold text-light small text-uppercase">Vision Feed & Visualizer</span>
+            <div class="btn-group btn-group-sm" role="group">
+              <input type="radio" class="btn-check" name="streamMode" id="modeCamera" autocomplete="off" checked>
+              <label class="btn btn-outline-primary" for="modeCamera">Live Camera (AI)</label>
+
+              <input type="radio" class="btn-check" name="streamMode" id="modeTest" autocomplete="off">
+              <label class="btn btn-outline-info" for="modeTest">Simulation / Fixtures</label>
+            </div>
+          </div>
+
+          <!-- Video viewport and Canvas rendering area -->
+          <div class="card-body p-2 position-relative bg-black d-flex flex-column align-items-center justify-content-center" style="min-height: 400px;">
+            <!-- Hidden native webcam video stream feeding local WebAssembly inference -->
+            <video id="webcamVideo" class="d-none" playsinline autoplay muted width="640" height="480"></video>
+
+            <!-- HTML5 Visualizer Canvas: Renders video frame + bounding boxes + skeletal joints + angle telemetry -->
+            <canvas id="visualizerCanvas" width="640" height="480" class="w-100 rounded" style="max-height: 380px; object-fit: contain; background-color: #0b0f19;"></canvas>
+
+            <!-- Camera Idle Placeholder Overlay -->
+            <div id="cameraStandbyOverlay" class="position-absolute top-50 start-50 translate-middle text-center p-3 bg-dark bg-opacity-75 rounded border border-secondary">
+              <div class="text-light fw-bold mb-1">📷 Camera Idle</div>
+              <p class="small text-muted mb-2">Click <strong>"Start Camera & Monitoring"</strong> below to begin real-time on-device safety evaluation.</p>
+              <div class="badge bg-primary">Local inference via MediaPipe Pose Lite</div>
+            </div>
+
+            <!-- Mode Watermark -->
+            <div id="streamWatermark" class="position-absolute top-0 start-0 m-2 badge bg-primary bg-opacity-75 text-white fw-bold">
+              LIVE WEBCAM AI
+            </div>
+
+            <div id="fpsTelemetry" class="position-absolute bottom-0 start-0 m-2 badge bg-dark bg-opacity-75 text-muted border border-secondary font-monospace" style="font-size: 0.7rem;">
+              FPS: 0 | Latency: 0ms
+            </div>
+          </div>
+
+          <!-- Live Camera Controls -->
+          <div id="cameraControls" class="card-footer bg-slate-900 border-secondary py-2">
+            <div class="d-flex flex-wrap gap-2 align-items-center justify-content-between">
+              <div class="d-flex gap-2">
+                <button id="btnStartCamera" class="btn btn-success btn-sm">▶ Start Camera & Monitoring</button>
+                <button id="btnStopCamera" class="btn btn-danger btn-sm" disabled>⏹ Stop Camera</button>
+              </div>
+              <span id="cameraStatusMsg" class="small text-muted">Ready to request camera access.</span>
+            </div>
+
+            <div id="cameraErrorAlert" class="alert alert-danger mt-2 py-1 px-2 small d-none" role="alert"></div>
+
+            <!-- Optional YOLOv8 PPE ONNX Model Loader Drawer -->
+            <div class="mt-2 pt-2 border-top border-secondary small">
+              <a class="text-decoration-none text-muted" data-bs-toggle="collapse" href="#onnxModelCollapse" role="button">
+                ⚙️ Optional: Load Custom YOLOv8 PPE ONNX Model
+              </a>
+              <div class="collapse mt-2" id="onnxModelCollapse">
+                <div class="card card-body bg-dark border-secondary p-2">
+                  <p class="text-muted small mb-1">
+                    If you have a trained <code>yolov8n-ppe.onnx</code> file, select it to enable local ONNX Runtime Web PPE detection:
+                  </p>
+                  <input type="file" id="customOnnxFileInput" accept=".onnx" class="form-control form-control-sm bg-slate-800 text-light border-secondary">
+                  <div id="onnxLoadFeedback" class="small mt-1 text-muted">Current status: PPE MODEL NOT AVAILABLE (Evaluating posture & falls independently).</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Simulation / Test Replay Controls -->
+          <div id="testHarnessControls" class="card-footer bg-slate-900 border-secondary py-2 d-none">
+            <div class="row g-2 align-items-center">
+              <div class="col-12 col-md-6">
+                <label for="fixtureSelector" class="form-label small text-secondary mb-1">Standardized Test Scenarios:</label>
+                <select id="fixtureSelector" class="form-select form-select-sm bg-dark text-light border-secondary">
+                  <option value="standard">1. Standard Inspection (Missing Vest & Bent Trunk)</option>
+                  <option value="compliant">2. Fully Compliant Worker (Hardhat + Vest + Upright)</option>
+                  <option value="missing_hardhat">3. Missing Hardhat + Unsafe Stoop</option>
+                  <option value="fall_descent">4. Fall Phase 1: Rapid Vertical Descent (Uncertain)</option>
+                  <option value="fall_confirmed">5. Fall Phase 2: Fallen on Floor (Confirmed FallEvent)</option>
+                  <option value="fatigue">6. Ergonomic Fatigue (Prolonged Head Droop & Immobility)</option>
+                </select>
+              </div>
+
+              <div class="col-12 col-md-6 d-flex flex-wrap gap-2 justify-content-md-end mt-2 mt-md-4">
+                <button id="btnProcessSingle" class="btn btn-primary btn-sm">⚡ Process Frame</button>
+                <button id="btnPlayStream" class="btn btn-outline-info btn-sm">▶ Stream @ 5Hz</button>
+                <button id="btnPauseStream" class="btn btn-outline-secondary btn-sm" disabled>⏸ Pause</button>
+              </div>
+            </div>
+
+            <!-- Custom JSON payload collapse -->
+            <div class="mt-2">
+              <button class="btn btn-link btn-sm p-0 text-decoration-none text-muted small" type="button" data-bs-toggle="collapse" data-bs-target="#customJsonCollapse">
+                + Paste Custom Frame JSON / Schema Input
+              </button>
+              <div class="collapse mt-2" id="customJsonCollapse">
+                <textarea id="customJsonInput" class="form-control form-control-sm bg-dark text-light border-secondary font-monospace" rows="4" placeholder='{"frame_id": 1, "timestamp": 1729332930450, "workers": [...]}'></textarea>
+                <button id="btnInjectCustomJson" class="btn btn-sm btn-outline-primary mt-1">Inject Custom JSON Frame</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Privacy & Local Processing Notice Card -->
+        <div class="card bg-slate-800 border-secondary shadow-sm">
+          <div class="card-body py-2 px-3">
+            <div class="d-flex align-items-start gap-2">
+              <span class="fs-5">🔒</span>
+              <div>
+                <h6 class="mb-1 text-light">Privacy & Edge Verification Guarantee</h6>
+                <p class="small text-muted mb-0">
+                  All computer vision models (MediaPipe Pose Lite) and the safety risk engine execute entirely inside your local browser runtime. <strong>Zero webcam frames, recordings, or facial biometric data are uploaded to external clouds or remote APIs.</strong>
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Safety Findings, Worker Cards, and Incident Log -->
+      <div class="col-12 col-lg-6">
+        <!-- Worker Safety Status Panel -->
+        <div class="card bg-slate-800 border-secondary mb-3 shadow-sm">
+          <div class="card-header bg-slate-900 border-secondary d-flex justify-content-between align-items-center py-2">
+            <span class="fw-semibold text-light small text-uppercase">Worker Safety Evaluation</span>
+            <span id="activeWorkerBadge" class="badge bg-primary">0 Workers</span>
+          </div>
+          <div class="card-body p-2" style="max-height: 220px; overflow-y: auto;">
+            <div id="workerListContainer" class="d-flex flex-column gap-2">
+              <div class="text-muted text-center py-3 small">No worker detections processed yet. Start the camera or select a simulation fixture.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Findings Breakdown Panels (PPE, Posture, Fall) -->
+        <div class="card bg-slate-800 border-secondary mb-3 shadow-sm">
+          <div class="card-header bg-slate-900 border-secondary py-2">
+            <ul class="nav nav-tabs card-header-tabs small" id="findingsTabs" role="tablist">
+              <li class="nav-item" role="presentation">
+                <button class="nav-link active text-light py-1 px-3" id="posture-tab" data-bs-toggle="tab" data-bs-target="#posture-pane" type="button" role="tab">Ergonomics & Posture</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link text-light py-1 px-3" id="fall-tab" data-bs-toggle="tab" data-bs-target="#fall-pane" type="button" role="tab">Fall Kinematics</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link text-light py-1 px-3" id="ppe-tab" data-bs-toggle="tab" data-bs-target="#ppe-pane" type="button" role="tab">PPE Compliance</button>
+              </li>
+            </ul>
+          </div>
+          <div class="card-body p-2 tab-content" style="min-height: 140px; max-height: 180px; overflow-y: auto;">
+            <!-- Posture Panel -->
+            <div class="tab-pane fade show active small" id="posture-pane" role="tabpanel">
+              <div id="postureFindingsContent" class="text-muted text-center py-2">No posture telemetry evaluated yet.</div>
+            </div>
+
+            <!-- Fall Panel -->
+            <div class="tab-pane fade small" id="fall-pane" role="tabpanel">
+              <div id="fallFindingsContent" class="text-muted text-center py-2">No fall kinematics evaluated yet.</div>
+            </div>
+
+            <!-- PPE Panel -->
+            <div class="tab-pane fade small" id="ppe-pane" role="tabpanel">
+              <div id="ppeFindingsContent" class="text-muted text-center py-2">
+                <div class="badge bg-warning-subtle text-warning mb-1">PPE MODEL NOT AVAILABLE</div>
+                <div class="small">PPE inference is un-evaluated. Workers are not marked compliant, and unverified PPE is not penalized as a violation.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Real-time Incident Event Log -->
+        <div class="card bg-slate-800 border-secondary shadow-sm">
+          <div class="card-header bg-slate-900 border-secondary d-flex justify-content-between align-items-center py-2">
+            <div class="d-flex align-items-center gap-2">
+              <span class="fw-semibold text-light small text-uppercase">Engine Event Bus Log</span>
+              <span class="badge bg-dark border border-secondary text-info font-monospace" style="font-size: 0.7rem;">risk:updated | violation:*</span>
+            </div>
+            <button id="btnClearLog" class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size: 0.75rem;">Clear Log</button>
+          </div>
+          <div class="card-body p-2 font-monospace" style="height: 190px; overflow-y: auto; background-color: #0b0f19;">
+            <div id="eventLogContainer" class="d-flex flex-column gap-1 small">
+              <div class="text-muted text-center py-3">Awaiting engine events...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- IndexedDB Inspection History Modal -->
+  <div class="modal fade" id="historyModal" tabindex="-1" aria-labelledby="historyModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content bg-slate-900 text-light border-secondary">
+        <div class="modal-header border-secondary py-2">
+          <h5 class="modal-title" id="historyModalLabel">📋 IndexedDB Inspection History (Dexie.js)</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="small text-muted">Stored completely in client-side IndexedDB database: <code>ErgoGuardDB</code></span>
+            <div class="d-flex gap-2">
+              <button id="btnExportHistory" class="btn btn-sm btn-outline-primary">⬇ Export JSON</button>
+              <button id="btnClearHistory" class="btn btn-sm btn-outline-danger">🗑 Clear Database</button>
+            </div>
+          </div>
+          <div class="table-responsive" style="max-height: 380px;">
+            <table class="table table-dark table-hover table-sm border-secondary small">
+              <thead>
+                <tr class="text-secondary text-uppercase" style="font-size: 0.75rem;">
+                  <th>Timestamp</th>
+                  <th>Frame ID</th>
+                  <th>Score</th>
+                  <th>Severity</th>
+                  <th>Workers</th>
+                  <th>Incidents</th>
+                </tr>
+              </thead>
+              <tbody id="historyTableBody">
+                <tr><td colspan="6" class="text-center text-muted py-3">No inspection history records stored yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer border-secondary py-1">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Local Offline Bootstrap and ONNX Runtime Web Dependencies -->
+  <script src="./vendor/bootstrap/bootstrap.bundle.min.js"></script>
+  <script src="./vendor/ort/ort.min.js"></script>
+
+  <!-- Main ES Module Application -->
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

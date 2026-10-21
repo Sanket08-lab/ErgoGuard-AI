@@ -1,0 +1,139 @@
+/* Slate & Dark Theme Custom Styles for ErgoGuard-AI Demo */
+
+:root {
+  --bg-slate-900: #0f172a;
+  --bg-slate-800: #1e293b;
+  --bg-slate-700: #334155;
+  --text-muted: #94a3b8;
+  --sev-low: #10b981;
+  --sev-medium: #f59e0b;
+  --sev-high: #f97316;
+  --sev-critical: #ef4444;
+}
+
+body {
+  background-color: var(--bg-slate-900) !important;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: #f1f5f9;
+  min-height: 100vh;
+}
+
+.bg-slate-900 {
+  background-color: var(--bg-slate-900) !important;
+}
+
+.bg-slate-800 {
+  background-color: var(--bg-slate-800) !important;
+}
+
+.bg-slate-700 {
+  background-color: var(--bg-slate-700) !important;
+}
+
+.border-secondary {
+  border-color: #334155 !important;
+}
+
+/* Severity Badges & Theme Colors */
+.badge-sev-low {
+  background-color: rgba(16, 185, 129, 0.2) !important;
+  color: #34d399 !important;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.badge-sev-medium {
+  background-color: rgba(245, 158, 11, 0.2) !important;
+  color: #fbbf24 !important;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.badge-sev-high {
+  background-color: rgba(249, 115, 22, 0.2) !important;
+  color: #fb923c !important;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+}
+
+.badge-sev-critical {
+  background-color: rgba(239, 68, 68, 0.2) !important;
+  color: #f87171 !important;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+/* Event Log Items */
+.log-entry {
+  padding: 4px 8px;
+  border-radius: 4px;
+  background-color: rgba(30, 41, 59, 0.7);
+  border-left: 3px solid #64748b;
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.log-entry.started {
+  border-left-color: var(--sev-critical);
+}
+
+.log-entry.escalated {
+  border-left-color: var(--sev-high);
+}
+
+.log-entry.resolved {
+  border-left-color: var(--sev-low);
+}
+
+.log-entry.risk {
+  border-left-color: #38bdf8;
+}
+
+/* Worker Cards */
+.worker-card {
+  background-color: rgba(15, 23, 42, 0.6);
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 8px 12px;
+  transition: border-color 0.15s ease-in-out;
+}
+
+.worker-card:hover {
+  border-color: #64748b;
+}
+
+/* Finding Detail Chips */
+.finding-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.finding-chip.violation {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.finding-chip.compliant {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.finding-chip.uncertain {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #fde68a;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.finding-chip.skipped {
+  background-color: rgba(148, 163, 184, 0.15);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+/* Canvas styling */
+#visualizerCanvas {
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.8);
+}

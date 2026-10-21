@@ -1,0 +1,269 @@
+{
+  "version": "1.0.0",
+  "timestamp": "2026-10-20T10:07:05.174765+00:00",
+  "frame_id": 1,
+  "camera_id": "cam_floor_01",
+  "fps_processing": 0.0,
+  "summary": {
+    "total_workers": 2,
+    "compliant_ppe_workers": 2,
+    "unsafe_posture_count": 0,
+    "fatigued_workers_count": 0,
+    "active_falls_count": 0,
+    "danger_zone_intrusions_count": 2,
+    "total_violations_count": 0,
+    "critical_alerts_count": 0
+  },
+  "workers": [
+    {
+      "track_id": 1,
+      "bbox": {
+        "x1": 100,
+        "y1": 100,
+        "x2": 200,
+        "y2": 400,
+        "confidence": 0.95,
+        "width": 100,
+        "height": 300,
+        "center_x": 150,
+        "center_y": 250
+      },
+      "ppe": {
+        "compliant": true,
+        "helmet": {
+          "detected": true,
+          "confidence": 0.85,
+          "bounding_box": null
+        },
+        "vest": {
+          "detected": true,
+          "confidence": 0.8,
+          "bounding_box": null
+        },
+        "goggles": {
+          "detected": false,
+          "confidence": 0.0,
+          "bounding_box": null
+        },
+        "gloves": {
+          "detected": false,
+          "confidence": 0.0,
+          "bounding_box": null
+        },
+        "boots": null,
+        "missing_required_ppe": []
+      },
+      "posture": {
+        "status": "SAFE",
+        "risk_level": "LOW",
+        "confidence": 0.7,
+        "angles": {
+          "trunk_inclination_deg": 12.0,
+          "neck_flexion_deg": 15.0,
+          "left_knee_angle_deg": 175.0,
+          "right_knee_angle_deg": 175.0,
+          "reba_risk_score": 1
+        },
+        "description": "Standing upright, posture normal."
+      },
+      "fatigue": {
+        "is_fatigued": false,
+        "fatigue_score": 0.15,
+        "indicators": [],
+        "head_droop_duration_seconds": 0.0,
+        "immobility_seconds": 0.0,
+        "description": "Worker posture indicates normal alertness."
+      },
+      "fall": {
+        "is_fallen": false,
+        "state": "NORMAL",
+        "confidence": 0.05,
+        "time_on_ground_seconds": 0.0,
+        "aspect_ratio": 3.0,
+        "torso_angle_deg": 85.0,
+        "emergency_alert": false
+      },
+      "danger_zone": {
+        "is_inside": true,
+        "zone_id": "DZ-01",
+        "zone_name": "Heavy Machinery Operation Zone",
+        "severity": "CRITICAL",
+        "time_in_zone_seconds": 0.0,
+        "violation_type": "MONITORED_PRESENCE"
+      },
+      "violations": []
+    },
+    {
+      "track_id": 2,
+      "bbox": {
+        "x1": 500,
+        "y1": 450,
+        "x2": 800,
+        "y2": 550,
+        "confidence": 0.9,
+        "width": 300,
+        "height": 100,
+        "center_x": 650,
+        "center_y": 500
+      },
+      "ppe": {
+        "compliant": true,
+        "helmet": {
+          "detected": true,
+          "confidence": 0.85,
+          "bounding_box": null
+        },
+        "vest": {
+          "detected": true,
+          "confidence": 0.8,
+          "bounding_box": null
+        },
+        "goggles": {
+          "detected": false,
+          "confidence": 0.0,
+          "bounding_box": null
+        },
+        "gloves": {
+          "detected": false,
+          "confidence": 0.0,
+          "bounding_box": null
+        },
+        "boots": null,
+        "missing_required_ppe": []
+      },
+      "posture": {
+        "status": "SAFE",
+        "risk_level": "LOW",
+        "confidence": 0.7,
+        "angles": {
+          "trunk_inclination_deg": 12.0,
+          "neck_flexion_deg": 15.0,
+          "left_knee_angle_deg": 175.0,
+          "right_knee_angle_deg": 175.0,
+          "reba_risk_score": 1
+        },
+        "description": "Standing upright, posture normal."
+      },
+      "fatigue": {
+        "is_fatigued": false,
+        "fatigue_score": 0.15,
+        "indicators": [],
+        "head_droop_duration_seconds": 0.0,
+        "immobility_seconds": 0.0,
+        "description": "Worker posture indicates normal alertness."
+      },
+      "fall": {
+        "is_fallen": false,
+        "state": "NORMAL",
+        "confidence": 0.05,
+        "time_on_ground_seconds": 0.0,
+        "aspect_ratio": 0.33,
+        "torso_angle_deg": 20.0,
+        "emergency_alert": false
+      },
+      "danger_zone": {
+        "is_inside": true,
+        "zone_id": "DZ-02",
+        "zone_name": "Forklift Transit Lane",
+        "severity": "HIGH",
+        "time_in_zone_seconds": 0.0,
+        "violation_type": "MONITORED_PRESENCE"
+      },
+      "violations": []
+    }
+  ],
+  "danger_zones": [
+    {
+      "zone_id": "DZ-01",
+      "zone_name": "Heavy Machinery Operation Zone",
+      "severity": "CRITICAL",
+      "description": "Exclusion zone around operating robotic arm and press machinery.",
+      "polygon": [
+        [
+          64.0,
+          396.0
+        ],
+        [
+          448.0,
+          396.0
+        ],
+        [
+          486.4,
+          684.0
+        ],
+        [
+          25.6,
+          684.0
+        ]
+      ],
+      "required_ppe": [
+        "helmet",
+        "vest"
+      ],
+      "max_dwell_seconds": 3.0,
+      "current_occupancy": 1
+    },
+    {
+      "zone_id": "DZ-02",
+      "zone_name": "Forklift Transit Lane",
+      "severity": "HIGH",
+      "description": "High-traffic vehicle corridor. Pedestrians must not loiter.",
+      "polygon": [
+        [
+          576.0,
+          216.0
+        ],
+        [
+          960.0,
+          216.0
+        ],
+        [
+          1088.0,
+          684.0
+        ],
+        [
+          512.0,
+          684.0
+        ]
+      ],
+      "required_ppe": [
+        "vest",
+        "helmet"
+      ],
+      "max_dwell_seconds": 5.0,
+      "current_occupancy": 1
+    },
+    {
+      "zone_id": "DZ-03",
+      "zone_name": "Chemical Storage / Hazardous Area",
+      "severity": "HIGH",
+      "description": "Storage area for volatile chemical solvents. PPE mandatory.",
+      "polygon": [
+        [
+          960.0,
+          36.0
+        ],
+        [
+          1254.4,
+          36.0
+        ],
+        [
+          1254.4,
+          324.0
+        ],
+        [
+          960.0,
+          324.0
+        ]
+      ],
+      "required_ppe": [
+        "helmet",
+        "goggles",
+        "vest"
+      ],
+      "max_dwell_seconds": 0.0,
+      "current_occupancy": 0
+    }
+  ],
+  "critical_alerts": []
+}

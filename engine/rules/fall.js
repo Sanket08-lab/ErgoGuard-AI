@@ -41,22 +41,130 @@ function parsePersonBox(raw) {
   };
 }
 
-// Computes the torso angle relative to the horizontal floor (0° = lying flat, 90° = perfectly upright).
-function extractTorsoFloorAngle(landmarks) {
-  if (!landmarks) return null;
-  const lm = landmarks.landmarks ?? landmarks.landmark ?? landmarks;
-  const ls = lm[11] ?? lm['11'];
-  const rs = lm[12] ?? lm['12'];
-  const lh = lm[23] ?? lm['23'];
-  const rh = lm[24] ?? lm['24'];
+// Normalizes arbitrary landmark collections into a validated Map by index.
+function parseLandmarksMap(raw) {
+  if (!raw) return null;
+  const list = raw.landmarks ?? raw.landmark ?? raw;
+  if (!list) return null;
 
-  if (!ls || !rs || !lh || !rh) return null;
-  const midShoulder = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
-  const midHip = { x: (lh.x + rh.x) / 2, y: (lh.y + rh.y) / 2 };
+  const map = new Map();
+  if (Array.isArray(list)) {
+    for (let idx = 0; idx < list.length; idx++) {
+      const pt = list[idx];
+      if (!pt) continue;
+      const x = typeof pt.x === 'number' ? pt.x : (Array.isArray(pt) ? pt[0] : null);
+      const y = typeof pt.y === 'number' ? pt.y : (Array.isArray(pt) ? pt[1] : null);
+      const z = typeof pt.z === 'number' ? pt.z : (Array.isArray(pt) ? pt[2] : 0);
+      const visibility = typeof pt.visibility === 'number' ? pt.visibility : (typeof pt.confidence === 'number' ? pt.confidence : 1.0);
+      if (x !== null && y !== null && Number.isFinite(x) && Number.isFinite(y)) {
+        map.set(idx, { x, y, z, visibility });
+      }
+    }
+  } else if (typeof list === 'object') {
+    for (const [key, pt] of Object.entries(list)) {
+      const idx = Number(key);
+      if (Number.isNaN(idx) || !pt) continue;
+      const x = typeof pt.x === 'number' ? pt.x : (Array.isArray(pt) ? pt[0] : null);
+      const y = typeof pt.y === 'number' ? pt.y : (Array.isArray(pt) ? pt[1] : null);
+      const z = typeof pt.z === 'number' ? pt.z : (Array.isArray(pt) ? pt[2] : 0);
+      const visibility = typeof pt.visibility === 'number' ? pt.visibility : (typeof pt.confidence === 'number' ? pt.confidence : 1.0);
+      if (x !== null && y !== null && Number.isFinite(x) && Number.isFinite(y)) {
+        map.set(idx, { x, y, z, visibility });
+      }
+    }
+  }
 
-  // Angle from vertical: 0° is upright, 90° is horizontal. Floor angle is 90° - vertical angle.
+  return map.size > 0 ? map : null;
+}
+
+// Analyzes skeletal posture and leg support to differentiate true falls from forward bending and floor reaching.
+function evaluatePoseKinematics(landmarksInput, box, options = {}) {
+  const lmMap = parseLandmarksMap(landmarksInput);
+  if (!lmMap) {
+    return {
+      hasLandmarks: false,
+      isReliable: false,
+      torsoFloorAngle: null,
+      isStandingLegsSupported: false,
+      hipAnkleVerticalDistance: null,
+    };
+  }
+
+  const minVisibility = options.minVisibility ?? CONFIG.minConf?.landmark ?? 0.4;
+  const ls = lmMap.get(11);
+  const rs = lmMap.get(12);
+  const lh = lmMap.get(23);
+  const rh = lmMap.get(24);
+  const lk = lmMap.get(25);
+  const rk = lmMap.get(26);
+  const la = lmMap.get(27);
+  const ra = lmMap.get(28);
+
+  const hasShoulders = (ls && ls.visibility >= minVisibility) || (rs && rs.visibility >= minVisibility);
+  const hasHips = (lh && lh.visibility >= minVisibility) || (rh && rh.visibility >= minVisibility);
+
+  if (!hasShoulders || !hasHips) {
+    return {
+      hasLandmarks: true,
+      isReliable: false,
+      torsoFloorAngle: null,
+      isStandingLegsSupported: false,
+      hipAnkleVerticalDistance: null,
+    };
+  }
+
+  const shoulderPts = [ls, rs].filter((p) => p && p.visibility >= minVisibility);
+  const hipPts = [lh, rh].filter((p) => p && p.visibility >= minVisibility);
+  const midShoulder = {
+    x: shoulderPts.reduce((acc, p) => acc + p.x, 0) / shoulderPts.length,
+    y: shoulderPts.reduce((acc, p) => acc + p.y, 0) / shoulderPts.length,
+  };
+  const midHip = {
+    x: hipPts.reduce((acc, p) => acc + p.x, 0) / hipPts.length,
+    y: hipPts.reduce((acc, p) => acc + p.y, 0) / hipPts.length,
+  };
+
   const angleVert = angleFromVertical(midShoulder, midHip);
-  return Math.max(0, Math.min(90, Math.round((90.0 - angleVert) * 10) / 10));
+  const torsoFloorAngle = Math.max(0, Math.min(90, Math.round((90.0 - angleVert) * 10) / 10));
+
+  // Determine if lower extremities are supporting the pelvis upright (standing or bending)
+  const anklePts = [la, ra].filter((p) => p && p.visibility >= 0.25);
+  const kneePts = [lk, rk].filter((p) => p && p.visibility >= 0.25);
+  const lowerPts = anklePts.length > 0 ? anklePts : kneePts;
+
+  let isStandingLegsSupported = false;
+  let hipAnkleVerticalDistance = null;
+
+  if (lowerPts.length > 0) {
+    const midLower = {
+      x: lowerPts.reduce((acc, p) => acc + p.x, 0) / lowerPts.length,
+      y: lowerPts.reduce((acc, p) => acc + p.y, 0) / lowerPts.length,
+    };
+
+    const rawDy = midLower.y - midHip.y;
+    hipAnkleVerticalDistance = Math.round(rawDy * 10) / 10;
+
+    // Check if coordinates are normalized (0-1) or pixel-based
+    const isNormalizedCoords = midLower.y <= 2.0 && midHip.y <= 2.0;
+    const normalizedDy = isNormalizedCoords
+      ? rawDy
+      : rawDy / Math.max(1, box?.height ?? 100);
+
+    const legAngleVert = angleFromVertical(midHip, midLower);
+
+    // Standing leg support: hips elevated above feet/knees and leg axis predominantly vertical
+    if (normalizedDy >= 0.18 && legAngleVert < 50.0) {
+      isStandingLegsSupported = true;
+    }
+  }
+
+  return {
+    hasLandmarks: true,
+    isReliable: true,
+    torsoFloorAngle,
+    isStandingLegsSupported,
+    hipAnkleVerticalDistance,
+  };
 }
 
 // Evaluates worker bounding box collapse, normalized descent velocity, and floor immobility.
@@ -111,8 +219,9 @@ export function fallRule(person, landmarks = null, trackState = {}, options = {}
   const aspectRatio = Math.round((box.height / box.width) * 100) / 100;
   const aspectThreshold = options.aspectRatioThreshold ?? CONFIG.fall?.aspectRatioThreshold ?? 0.85;
 
-  // 2. Torso inclination relative to floor (< 30° indicates prone/horizontal body)
-  const torsoFloorAngle = extractTorsoFloorAngle(landmarks);
+  // 2. Biomechanical Pose Kinematics (torso inclination and leg support)
+  const kinematics = evaluatePoseKinematics(landmarks, box, options);
+  const torsoFloorAngle = kinematics.torsoFloorAngle;
   const torsoFloorAngleThreshold = options.torsoAngleThresholdDeg ?? CONFIG.fall?.torsoAngleThresholdDeg ?? 30.0;
 
   // 3. Normalized descent velocity (displacement normalized by person height)
@@ -139,19 +248,44 @@ export function fallRule(person, landmarks = null, trackState = {}, options = {}
     }
   }
 
-  // 4. Horizontal floor condition
-  const isHorizontal = (aspectRatio < aspectThreshold) || (torsoFloorAngle !== null && torsoFloorAngle < torsoFloorAngleThreshold);
+  // 4. Horizontal floor condition discrimination
+  let isFloorPosture = false;
+  let isUncertainEvidence = false;
+  let uncertainReason = '';
+
+  const isCollapsedBox = aspectRatio <= aspectThreshold;
+
+  if (isCollapsedBox) {
+    if (!kinematics.hasLandmarks || !kinematics.isReliable) {
+      // Box collapsed horizontally, but pose landmarks are missing or unreliable.
+      // Per safety contract: do NOT automatically confirm fall without reliable pose evidence.
+      isUncertainEvidence = true;
+      uncertainReason = 'Worker aspect ratio collapsed, but pose landmarks are missing or unreliable to confirm fall.';
+    } else if (kinematics.isStandingLegsSupported) {
+      // Person is supported on standing legs (e.g. deep forward bend or reaching down).
+      isFloorPosture = false;
+    } else {
+      // Reliable landmarks confirm absence of standing leg support
+      const isTorsoHorizontal = torsoFloorAngle !== null && torsoFloorAngle <= torsoFloorAngleThreshold;
+      if (isTorsoHorizontal) {
+        isFloorPosture = true;
+      }
+    }
+  } else {
+    // Aspect ratio > aspectThreshold: Worker is not collapsed horizontally
+    isFloorPosture = false;
+  }
 
   let fallStartTimeMs = trackState.fallStartTimeMs ?? null;
   let groundDurationMs = 0;
 
-  if (isHorizontal) {
+  if (isFloorPosture) {
     if (fallStartTimeMs === null) {
       fallStartTimeMs = nowMs;
     }
     groundDurationMs = Math.max(0, nowMs - fallStartTimeMs);
   } else {
-    // Worker is upright or recovered
+    // Worker is upright, recovered, or bending with leg support
     fallStartTimeMs = null;
     groundDurationMs = 0;
   }
@@ -165,7 +299,7 @@ export function fallRule(person, landmarks = null, trackState = {}, options = {}
   let emergencyAlert = false;
   const findings = [];
 
-  if (isHorizontal && groundDurationMs >= confirmMs) {
+  if (isFloorPosture && groundDurationMs >= confirmMs) {
     isFallen = true;
     const groundSec = Math.round((groundDurationMs / 1000) * 10) / 10;
 
@@ -207,6 +341,21 @@ export function fallRule(person, landmarks = null, trackState = {}, options = {}
         },
       });
     }
+  } else if (isUncertainEvidence) {
+    fallState = 'UNCERTAIN';
+    findings.push({
+      status: 'UNCERTAIN',
+      type: 'UncertainFall',
+      confidence: 0.50,
+      points: 0,
+      evidence: {
+        fallState,
+        aspectRatio,
+        torsoFloorAngleDeg: torsoFloorAngle,
+        normalizedVelocity,
+        reason: uncertainReason,
+      },
+    });
   } else if (isRapidDescent) {
     fallState = 'RAPID_DESCENT';
     findings.push({
