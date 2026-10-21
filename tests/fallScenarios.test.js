@@ -249,4 +249,124 @@ test('7. Event lifecycle separation: Posture violation and FallEvent are complet
   assert.strictEqual(engine.tracker.getActiveIncidents().length, 0);
 });
 
+test('8. RiskEngine: Standing with arms extended horizontally (T-pose) keeps score 0 and severity LOW', () => {
+  const engine = new RiskEngine({ onsetDebounceMs: 0 });
+  const startedEvents = [];
+  engine.addEventListener('violation:started', (e) => startedEvents.push(e.detail));
+
+  // T-pose worker: arms extended 90° sideways, wide bounding box (AR=0.71)
+  const tPoseWorker = {
+    track_id: 1,
+    bbox: { x1: 40, y1: 100, x2: 600, y2: 500 }, // W=560, H=400 (AR=0.71 <= 0.85)
+    ppe: { helmet: { detected: true, confidence: 0.9 }, vest: { detected: true, confidence: 0.9 } },
+    landmarks: [
+      ...Array(11).fill({ x: 320, y: 300, visibility: 0.1 }),
+      { x: 270, y: 160, visibility: 0.95 }, // 11: left shoulder
+      { x: 370, y: 160, visibility: 0.95 }, // 12: right shoulder
+      ...Array(2).fill({ x: 0, y: 0, visibility: 0.1 }),
+      { x: 50, y: 160, visibility: 0.95 },  // 15: left wrist extended sideways
+      { x: 590, y: 160, visibility: 0.95 }, // 16: right wrist extended sideways
+      ...Array(6).fill({ x: 0, y: 0, visibility: 0.1 }),
+      { x: 290, y: 280, visibility: 0.95 }, // 23: left hip
+      { x: 350, y: 280, visibility: 0.95 }, // 24: right hip
+      { x: 290, y: 380, visibility: 0.90 }, // 25: left knee
+      { x: 350, y: 380, visibility: 0.90 }, // 26: right knee
+      { x: 290, y: 480, visibility: 0.90 }, // 27: left ankle
+      { x: 350, y: 480, visibility: 0.90 }, // 28: right ankle
+    ],
+  };
+
+  // Evaluate across multiple frames (0ms, 200ms, 500ms, 1000ms)
+  engine.processFrame({ timestamp: 0, frameId: 1, workers: [tPoseWorker] });
+  engine.processFrame({ timestamp: 200, frameId: 2, workers: [tPoseWorker] });
+  engine.processFrame({ timestamp: 500, frameId: 3, workers: [tPoseWorker] });
+  const res = engine.processFrame({ timestamp: 1000, frameId: 4, workers: [tPoseWorker] });
+
+  // Overall risk and worker risk must remain completely zero
+  assert.strictEqual(res.overallRisk.score, 0);
+  assert.strictEqual(res.overallRisk.severity, 'LOW');
+  assert.strictEqual(res.workers[0].riskScore, 0);
+  assert.strictEqual(res.workers[0].severity, 'LOW');
+  assert.strictEqual(res.workers[0].fall.fallState, 'NORMAL');
+  assert.strictEqual(res.workers[0].fall.isFallen, false);
+  assert.strictEqual(res.workers[0].posture.postureState, 'SAFE');
+
+  // No FallEvent started
+  assert.strictEqual(startedEvents.some((e) => e.ruleType === 'FallEvent'), false);
+  assert.strictEqual(res.activeIncidents.length, 0);
+});
+
+test('9. RiskEngine: Standing with arms extended while turned sideways keeps score 0 and severity LOW', () => {
+  const engine = new RiskEngine({ onsetDebounceMs: 0 });
+  const startedEvents = [];
+  engine.addEventListener('violation:started', (e) => startedEvents.push(e.detail));
+
+  const sideWorker = {
+    track_id: 1,
+    bbox: { x1: 50, y1: 100, x2: 590, y2: 340 }, // H=240, W=540 (AR=0.44)
+    ppe: { helmet: { detected: true, confidence: 0.9 }, vest: { detected: true, confidence: 0.9 } },
+    landmarks: [
+      ...Array(11).fill({ x: 320, y: 300, z: 0, visibility: 0.1 }),
+      { x: 300, y: 150, z: -40, visibility: 0.95 }, // 11
+      { x: 340, y: 155, z: 40, visibility: 0.95 },  // 12
+      ...Array(2).fill({ x: 0, y: 0, visibility: 0.1 }),
+      { x: 80, y: 150, z: -80, visibility: 0.95 },  // 15
+      { x: 560, y: 155, z: 80, visibility: 0.95 },  // 16
+      ...Array(6).fill({ x: 0, y: 0, visibility: 0.1 }),
+      { x: 310, y: 280, z: -30, visibility: 0.95 }, // 23
+      { x: 330, y: 280, z: 30, visibility: 0.95 },  // 24
+      { x: 310, y: 380, z: -20, visibility: 0.90 }, // 25
+      { x: 330, y: 380, z: 20, visibility: 0.90 },  // 26
+      { x: 310, y: 480, z: -20, visibility: 0.90 }, // 27
+      { x: 330, y: 480, z: 20, visibility: 0.90 },  // 28
+    ],
+  };
+
+  engine.processFrame({ timestamp: 0, frameId: 1, workers: [sideWorker] });
+  const res = engine.processFrame({ timestamp: 600, frameId: 2, workers: [sideWorker] });
+
+  assert.strictEqual(res.overallRisk.score, 0);
+  assert.strictEqual(res.overallRisk.severity, 'LOW');
+  assert.strictEqual(res.workers[0].riskScore, 0);
+  assert.strictEqual(res.workers[0].fall.fallState, 'NORMAL');
+  assert.strictEqual(res.workers[0].fall.isFallen, false);
+  assert.strictEqual(startedEvents.some((e) => e.ruleType === 'FallEvent'), false);
+  assert.strictEqual(res.activeIncidents.length, 0);
+});
+
+test('10. RiskEngine: Standing with arms raised overhead keeps score 0 and severity LOW', () => {
+  const engine = new RiskEngine({ onsetDebounceMs: 0 });
+  const startedEvents = [];
+  engine.addEventListener('violation:started', (e) => startedEvents.push(e.detail));
+
+  const overheadWorker = {
+    track_id: 1,
+    bbox: { x1: 250, y1: 30, x2: 390, y2: 510 }, // H=480, W=140 (AR=3.43)
+    ppe: { helmet: { detected: true, confidence: 0.9 }, vest: { detected: true, confidence: 0.9 } },
+    landmarks: [
+      ...Array(11).fill({ x: 320, y: 300, visibility: 0.1 }),
+      { x: 280, y: 180, visibility: 0.95 }, // 11
+      { x: 360, y: 180, visibility: 0.95 }, // 12
+      ...Array(2).fill({ x: 0, y: 0, visibility: 0.1 }),
+      { x: 290, y: 40, visibility: 0.95 },  // 15 overhead
+      { x: 350, y: 40, visibility: 0.95 },  // 16 overhead
+      ...Array(6).fill({ x: 0, y: 0, visibility: 0.1 }),
+      { x: 290, y: 300, visibility: 0.95 }, // 23
+      { x: 350, y: 300, visibility: 0.95 }, // 24
+      { x: 290, y: 400, visibility: 0.90 }, // 25
+      { x: 350, y: 400, visibility: 0.90 }, // 26
+      { x: 290, y: 500, visibility: 0.90 }, // 27
+      { x: 350, y: 500, visibility: 0.90 }, // 28
+    ],
+  };
+
+  const res = engine.processFrame({ timestamp: 0, frameId: 1, workers: [overheadWorker] });
+  assert.strictEqual(res.overallRisk.score, 0);
+  assert.strictEqual(res.overallRisk.severity, 'LOW');
+  assert.strictEqual(res.workers[0].riskScore, 0);
+  assert.strictEqual(res.workers[0].fall.fallState, 'NORMAL');
+  assert.strictEqual(res.workers[0].fall.isFallen, false);
+  assert.strictEqual(startedEvents.some((e) => e.ruleType === 'FallEvent'), false);
+});
+
 console.log(`\nAll ${testsRun} fall integration scenarios passed successfully!\n`);

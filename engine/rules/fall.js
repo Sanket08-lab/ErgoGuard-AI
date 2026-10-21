@@ -85,6 +85,9 @@ function evaluatePoseKinematics(landmarksInput, box, options = {}) {
       hasLandmarks: false,
       isReliable: false,
       torsoFloorAngle: null,
+      torsoAspectRatio: null,
+      isUprightTorso: false,
+      hasLowerExtremities: false,
       isStandingLegsSupported: false,
       hipAnkleVerticalDistance: null,
     };
@@ -108,6 +111,9 @@ function evaluatePoseKinematics(landmarksInput, box, options = {}) {
       hasLandmarks: true,
       isReliable: false,
       torsoFloorAngle: null,
+      torsoAspectRatio: null,
+      isUprightTorso: false,
+      hasLowerExtremities: false,
       isStandingLegsSupported: false,
       hipAnkleVerticalDistance: null,
     };
@@ -124,18 +130,32 @@ function evaluatePoseKinematics(landmarksInput, box, options = {}) {
     y: hipPts.reduce((acc, p) => acc + p.y, 0) / hipPts.length,
   };
 
-  const angleVert = angleFromVertical(midShoulder, midHip);
-  const torsoFloorAngle = Math.max(0, Math.min(90, Math.round((90.0 - angleVert) * 10) / 10));
+  // 2D inclination from vertical in image plane (gravity aligns with positive Y downward)
+  const dx = midHip.x - midShoulder.x;
+  const dy = midHip.y - midShoulder.y;
+  const angleVert2D = (Math.atan2(Math.abs(dx), Math.abs(dy)) * 180) / Math.PI;
+  const torsoFloorAngle = Math.max(0, Math.min(90, Math.round((90.0 - angleVert2D) * 10) / 10));
+
+  // Compute torso aspect ratio (height / width) strictly from trunk keypoints to decouple arm positions
+  const torsoHeight = Math.abs(dy);
+  const shoulderWidth = (ls && rs) ? Math.abs(rs.x - ls.x) : 0;
+  const hipWidth = (lh && rh) ? Math.abs(rh.x - lh.x) : 0;
+  const torsoWidth = Math.max(shoulderWidth, hipWidth, 20);
+  const torsoAspectRatio = Math.round((torsoHeight / torsoWidth) * 100) / 100;
+
+  // Upright torso: spine angle > 45° from floor, shoulders positioned above hips (dy > 0)
+  const isUprightTorso = torsoFloorAngle > 45.0 && dy > 0 && torsoHeight >= 20;
 
   // Determine if lower extremities are supporting the pelvis upright (standing or bending)
   const anklePts = [la, ra].filter((p) => p && p.visibility >= 0.25);
   const kneePts = [lk, rk].filter((p) => p && p.visibility >= 0.25);
   const lowerPts = anklePts.length > 0 ? anklePts : kneePts;
+  const hasLowerExtremities = lowerPts.length > 0;
 
   let isStandingLegsSupported = false;
   let hipAnkleVerticalDistance = null;
 
-  if (lowerPts.length > 0) {
+  if (hasLowerExtremities) {
     const midLower = {
       x: lowerPts.reduce((acc, p) => acc + p.x, 0) / lowerPts.length,
       y: lowerPts.reduce((acc, p) => acc + p.y, 0) / lowerPts.length,
@@ -150,10 +170,12 @@ function evaluatePoseKinematics(landmarksInput, box, options = {}) {
       ? rawDy
       : rawDy / Math.max(1, box?.height ?? 100);
 
-    const legAngleVert = angleFromVertical(midHip, midLower);
+    const legDx = midLower.x - midHip.x;
+    const legDy = midLower.y - midHip.y;
+    const legAngleVert = (Math.atan2(Math.abs(legDx), Math.abs(legDy)) * 180) / Math.PI;
 
     // Standing leg support: hips elevated above feet/knees and leg axis predominantly vertical
-    if (normalizedDy >= 0.18 && legAngleVert < 50.0) {
+    if (normalizedDy >= 0.18 && legAngleVert < 50.0 && legDy > 0) {
       isStandingLegsSupported = true;
     }
   }
@@ -162,6 +184,9 @@ function evaluatePoseKinematics(landmarksInput, box, options = {}) {
     hasLandmarks: true,
     isReliable: true,
     torsoFloorAngle,
+    torsoAspectRatio,
+    isUprightTorso,
+    hasLowerExtremities,
     isStandingLegsSupported,
     hipAnkleVerticalDistance,
   };
@@ -261,11 +286,20 @@ export function fallRule(person, landmarks = null, trackState = {}, options = {}
       // Per safety contract: do NOT automatically confirm fall without reliable pose evidence.
       isUncertainEvidence = true;
       uncertainReason = 'Worker aspect ratio collapsed, but pose landmarks are missing or unreliable to confirm fall.';
+    } else if (kinematics.isUprightTorso) {
+      // Worker's torso is upright against gravity (spine angle > 45°, shoulders above hips).
+      // Bounding box collapse was caused by lateral limb extension (e.g. arms outstretched horizontally).
+      isFloorPosture = false;
     } else if (kinematics.isStandingLegsSupported) {
       // Person is supported on standing legs (e.g. deep forward bend or reaching down).
       isFloorPosture = false;
+    } else if (!kinematics.hasLowerExtremities) {
+      // Lower body is missing/occluded from camera frame; cannot verify ground level support.
+      // Return UNCERTAIN instead of confirming a false fall.
+      isUncertainEvidence = true;
+      uncertainReason = 'Worker torso is angled, but lower extremities are not visible to confirm ground contact.';
     } else {
-      // Reliable landmarks confirm absence of standing leg support
+      // Reliable landmarks confirm absence of standing leg support AND horizontal torso
       const isTorsoHorizontal = torsoFloorAngle !== null && torsoFloorAngle <= torsoFloorAngleThreshold;
       if (isTorsoHorizontal) {
         isFloorPosture = true;

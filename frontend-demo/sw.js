@@ -1,7 +1,7 @@
 // ErgoGuard-AI Offline Service Worker
 // Pre-caches application shell, safety engine modules, vendor WebAssembly runtimes, and local vision models.
 
-const CACHE_NAME = 'ergoguard-ai-v1';
+const CACHE_NAME = 'ergoguard-ai-v2';
 
 const PRECACHE_ASSETS = [
   './index.html',
@@ -75,33 +75,54 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Serves cached assets for offline-first resilience with network fallback.
+// Serves cached assets for offline-first resilience with network-first for local code scripts.
 self.addEventListener('fetch', (event) => {
   // Only handle GET requests
   if (event.request.method !== 'GET') return;
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
+  const url = event.request.url;
+  const isAppScript = url.includes('/engine/') || 
+                      (url.includes('/frontend-demo/') && !url.includes('/vendor/') && !url.includes('/models/'));
 
-      // Fetch from network and dynamically cache valid local responses
-      return fetch(event.request).then((networkResponse) => {
-        if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
-          return networkResponse;
+  if (isAppScript) {
+    // Network-first for application scripts so live changes apply immediately, with cache fallback when offline
+    event.respondWith(
+      fetch(event.request).then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200) {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+        return networkResponse;
+      }).catch(() => {
+        return caches.match(event.request);
+      })
+    );
+  } else {
+    // Cache-first for large static vendor assets and models
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
         }
 
-        const responseToCache = networkResponse.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
-        });
+        return fetch(event.request).then((networkResponse) => {
+          if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
+            return networkResponse;
+          }
 
-        return networkResponse;
-      }).catch((err) => {
-        console.warn('[ServiceWorker] Fetch failed and asset not in cache:', event.request.url);
-        throw err;
-      });
-    })
-  );
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+
+          return networkResponse;
+        }).catch((err) => {
+          console.warn('[ServiceWorker] Fetch failed and asset not in cache:', event.request.url);
+          throw err;
+        });
+      })
+    );
+  }
 });

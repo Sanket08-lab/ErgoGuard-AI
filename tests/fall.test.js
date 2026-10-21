@@ -229,4 +229,169 @@ test('INVALID & SKIPPED: malformed boxes and tiny detections are safely handled'
   assert.strictEqual(tiny.findings[0].points, 0);
 });
 
+// ============================================================================
+// REGRESSION SUITE: ARM POSITION & SPATIAL ORIENTATION INVARIANCE
+// Ensures arm positions, lateral reach, and orientation NEVER trigger FallEvent
+// ============================================================================
+
+test('REGRESSION 1: Standing with arms at sides remains COMPLIANT with 0 points', () => {
+  const box = { x1: 100, y1: 100, x2: 250, y2: 500, confidence: 0.95 }; // H=400, W=150 (AR=2.67)
+  const lms = Array(33).fill(null).map(() => ({ x: 175, y: 300, visibility: 0.1 }));
+  lms[11] = { x: 160, y: 160, visibility: 0.95 }; // left shoulder
+  lms[12] = { x: 190, y: 160, visibility: 0.95 }; // right shoulder
+  lms[15] = { x: 150, y: 270, visibility: 0.95 }; // left wrist hanging down
+  lms[16] = { x: 200, y: 270, visibility: 0.95 }; // right wrist hanging down
+  lms[23] = { x: 165, y: 280, visibility: 0.95 }; // left hip
+  lms[24] = { x: 185, y: 280, visibility: 0.95 }; // right hip
+  lms[25] = { x: 165, y: 380, visibility: 0.90 }; // left knee
+  lms[26] = { x: 185, y: 380, visibility: 0.90 }; // right knee
+  lms[27] = { x: 165, y: 480, visibility: 0.90 }; // left ankle
+  lms[28] = { x: 185, y: 480, visibility: 0.90 }; // right ankle
+
+  const res = fallRule(box, lms, {}, { timestamp: 0 });
+  assert.strictEqual(res.status, 'COMPLIANT');
+  assert.strictEqual(res.fallState, 'NORMAL');
+  assert.strictEqual(res.isFallen, false);
+  assert.strictEqual(res.findings.length, 0);
+  assert.ok(res.torsoFloorAngleDeg > 75.0);
+});
+
+test('REGRESSION 2: Both arms extended horizontally (T-pose) with collapsed box aspect ratio does NOT trigger FallEvent', () => {
+  // Extending arms horizontally expands bounding box width to full arm span (560px), collapsing AR to 0.71 (<= 0.85)
+  const tBox = { x1: 40, y1: 100, x2: 600, y2: 500, confidence: 0.95 }; // H=400, W=560 (AR=0.71)
+  const tLms = Array(33).fill(null).map(() => ({ x: 320, y: 300, visibility: 0.1 }));
+  tLms[11] = { x: 270, y: 160, visibility: 0.95 }; // shoulders
+  tLms[12] = { x: 370, y: 160, visibility: 0.95 };
+  tLms[15] = { x: 50, y: 160, visibility: 0.95 };  // left wrist extended wide
+  tLms[16] = { x: 590, y: 160, visibility: 0.95 }; // right wrist extended wide
+  tLms[23] = { x: 290, y: 280, visibility: 0.95 }; // hips
+  tLms[24] = { x: 350, y: 280, visibility: 0.95 };
+  tLms[25] = { x: 290, y: 380, visibility: 0.90 }; // knees
+  tLms[26] = { x: 350, y: 380, visibility: 0.90 };
+  tLms[27] = { x: 290, y: 480, visibility: 0.90 }; // ankles
+  tLms[28] = { x: 350, y: 480, visibility: 0.90 };
+
+  // Frame 1 @ t=0ms
+  const step1 = fallRule(tBox, tLms, {}, { timestamp: 0 });
+  assert.strictEqual(step1.status, 'COMPLIANT');
+  assert.strictEqual(step1.fallState, 'NORMAL');
+  assert.strictEqual(step1.isFallen, false);
+  assert.strictEqual(step1.findings.length, 0);
+
+  // Frame 2 @ t=500ms (held longer than 333ms confirm threshold) -> must stay COMPLIANT
+  const step2 = fallRule(tBox, tLms, step1.updatedTrackState, { timestamp: 500 });
+  assert.strictEqual(step2.status, 'COMPLIANT');
+  assert.strictEqual(step2.fallState, 'NORMAL');
+  assert.strictEqual(step2.isFallen, false);
+  assert.strictEqual(step2.findings.length, 0);
+
+  // Even in waist-up desk framing where knees/ankles are cut off and AR=0.39
+  const halfBox = { x1: 40, y1: 100, x2: 600, y2: 320, confidence: 0.95 }; // H=220, W=560 (AR=0.39)
+  const halfLms = [...tLms];
+  halfLms[25] = { x: 290, y: 550, visibility: 0.1 }; // knees out of frame
+  halfLms[26] = { x: 350, y: 550, visibility: 0.1 };
+  halfLms[27] = { x: 290, y: 650, visibility: 0.1 }; // ankles out of frame
+  halfLms[28] = { x: 350, y: 650, visibility: 0.1 };
+
+  const halfRes = fallRule(halfBox, halfLms, step2.updatedTrackState, { timestamp: 1000 });
+  assert.strictEqual(halfRes.status, 'COMPLIANT');
+  assert.strictEqual(halfRes.fallState, 'NORMAL');
+  assert.strictEqual(halfRes.isFallen, false);
+  assert.strictEqual(halfRes.findings.length, 0);
+});
+
+test('REGRESSION 3: Both arms raised overhead produces tall aspect ratio and stays COMPLIANT', () => {
+  const upBox = { x1: 250, y1: 30, x2: 390, y2: 510, confidence: 0.95 }; // H=480, W=140 (AR=3.43)
+  const upLms = Array(33).fill(null).map(() => ({ x: 320, y: 300, visibility: 0.1 }));
+  upLms[11] = { x: 280, y: 180, visibility: 0.95 }; // shoulders
+  upLms[12] = { x: 360, y: 180, visibility: 0.95 };
+  upLms[15] = { x: 290, y: 40, visibility: 0.95 };  // left wrist overhead
+  upLms[16] = { x: 350, y: 40, visibility: 0.95 };  // right wrist overhead
+  upLms[23] = { x: 290, y: 300, visibility: 0.95 }; // hips
+  upLms[24] = { x: 350, y: 300, visibility: 0.95 };
+  upLms[25] = { x: 290, y: 400, visibility: 0.90 };
+  upLms[26] = { x: 350, y: 400, visibility: 0.90 };
+  upLms[27] = { x: 290, y: 500, visibility: 0.90 };
+  upLms[28] = { x: 350, y: 500, visibility: 0.90 };
+
+  const res = fallRule(upBox, upLms, {}, { timestamp: 0 });
+  assert.strictEqual(res.status, 'COMPLIANT');
+  assert.strictEqual(res.fallState, 'NORMAL');
+  assert.strictEqual(res.isFallen, false);
+  assert.strictEqual(res.findings.length, 0);
+});
+
+test('REGRESSION 4: Standing with arms extended while turning sideways (oblique/profile) stays COMPLIANT', () => {
+  // Worker turned at 45° angle with arms reaching outward; 2D spine remains vertical against gravity
+  const sideBox = { x1: 50, y1: 100, x2: 590, y2: 340, confidence: 0.95 }; // H=240, W=540 (AR=0.44)
+  const sideLms = Array(33).fill(null).map(() => ({ x: 320, y: 300, z: 0, visibility: 0.1 }));
+  // Left shoulder slightly back in depth, right shoulder forward
+  sideLms[11] = { x: 300, y: 150, z: -40, visibility: 0.95 };
+  sideLms[12] = { x: 340, y: 155, z: 40, visibility: 0.95 };
+  // Arms outstretched
+  sideLms[15] = { x: 80, y: 150, z: -80, visibility: 0.95 };
+  sideLms[16] = { x: 560, y: 155, z: 80, visibility: 0.95 };
+  // Hips
+  sideLms[23] = { x: 310, y: 280, z: -30, visibility: 0.95 };
+  sideLms[24] = { x: 330, y: 280, z: 30, visibility: 0.95 };
+  // Knees and ankles
+  sideLms[25] = { x: 310, y: 380, z: -20, visibility: 0.90 };
+  sideLms[26] = { x: 330, y: 380, z: 20, visibility: 0.90 };
+  sideLms[27] = { x: 310, y: 480, z: -20, visibility: 0.90 };
+  sideLms[28] = { x: 330, y: 480, z: 20, visibility: 0.90 };
+
+  const res1 = fallRule(sideBox, sideLms, {}, { timestamp: 0 });
+  assert.strictEqual(res1.status, 'COMPLIANT');
+  assert.strictEqual(res1.fallState, 'NORMAL');
+  assert.strictEqual(res1.isFallen, false);
+  assert.strictEqual(res1.findings.length, 0);
+
+  // Even after holding the pose for 800ms
+  const res2 = fallRule(sideBox, sideLms, res1.updatedTrackState, { timestamp: 800 });
+  assert.strictEqual(res2.status, 'COMPLIANT');
+  assert.strictEqual(res2.fallState, 'NORMAL');
+  assert.strictEqual(res2.isFallen, false);
+  assert.strictEqual(res2.findings.length, 0);
+});
+
+test('REGRESSION 5: Genuine multi-frame fall-like sequence confirms fall and resets on recovery', () => {
+  let trackState = {};
+
+  // Step 1: Upright standing at t=0
+  const s1 = fallRule(uprightPerson, uprightLandmarks, trackState, { timestamp: 0 });
+  assert.strictEqual(s1.fallState, 'NORMAL');
+  assert.strictEqual(s1.isFallen, false);
+  trackState = s1.updatedTrackState;
+
+  // Step 2: Rapid vertical drop at t=100ms
+  const dropBox = { x1: 100, y1: 160, x2: 250, y2: 560 };
+  const s2 = fallRule(dropBox, uprightLandmarks, trackState, { timestamp: 100 });
+  assert.strictEqual(s2.fallState, 'RAPID_DESCENT');
+  assert.strictEqual(s2.status, 'UNCERTAIN');
+  assert.strictEqual(s2.isFallen, false);
+  assert.strictEqual(s2.findings[0].points, 0);
+  trackState = s2.updatedTrackState;
+
+  // Step 3: Horizontal floor contact at t=200ms (duration 0ms < 333ms confirm threshold)
+  const s3 = fallRule(fallenPerson, fallenLandmarks, trackState, { timestamp: 200 });
+  assert.strictEqual(s3.isFallen, false); // Pending confirmation (duration < 333ms)
+  assert.strictEqual(s3.findings[0]?.points ?? 0, 0);
+  trackState = s3.updatedTrackState;
+
+  // Step 4: Persistent floor contact at t=600ms (duration 400ms >= 333ms) -> Confirmed Fall!
+  const s4 = fallRule(fallenPerson, fallenLandmarks, trackState, { timestamp: 600 });
+  assert.strictEqual(s4.isFallen, true);
+  assert.strictEqual(s4.fallState, 'FALLEN');
+  assert.strictEqual(s4.status, 'VIOLATION');
+  assert.strictEqual(s4.findings[0].points, 90);
+  trackState = s4.updatedTrackState;
+
+  // Step 5: Worker stands back up at t=1200ms -> Immediate recovery to NORMAL
+  const s5 = fallRule(uprightPerson, uprightLandmarks, trackState, { timestamp: 1200 });
+  assert.strictEqual(s5.isFallen, false);
+  assert.strictEqual(s5.fallState, 'NORMAL');
+  assert.strictEqual(s5.status, 'COMPLIANT');
+  assert.strictEqual(s5.findings.length, 0);
+});
+
 console.log(`\nAll ${testsRun} fall tests passed successfully!\n`);
