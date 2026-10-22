@@ -121,10 +121,12 @@ async function main() {
     console.log('✓ Badge Offline State:', badgeOffline);
 
     // Assert truthful states
-    if (!badgePpe.includes('PPE MODEL NOT AVAILABLE')) {
-      console.warn('WARNING: PPE badge expected "PPE MODEL NOT AVAILABLE", got:', badgePpe);
-    } else {
+    if (badgePpe.includes('PPE: Ready (YOLOv8 Nexus)')) {
+      console.log('✓ VERIFIED: YOLOv8 Nexus ONNX model loaded successfully ("PPE: Ready (YOLOv8 Nexus)")');
+    } else if (badgePpe.includes('PPE MODEL NOT AVAILABLE')) {
       console.log('✓ VERIFIED: Application truthfully reports "PPE MODEL NOT AVAILABLE"');
+    } else {
+      console.log('✓ Badge PPE State:', badgePpe);
     }
 
     if (badgeStorage.includes('Ready')) {
@@ -199,22 +201,52 @@ async function main() {
     console.log('✓ Camera stopped and tracks released:', isVideoStopped);
     console.log('✓ Pipeline stopped status:', stoppedStatus);
 
-    console.log('\n--- VERIFYING CUSTOM ONNX ERROR VALIDATION ---');
-
-    // 6. Test invalid ONNX file handling (must not crash)
-    const onnxTestResult = await evaluate(`
+    console.log('\n--- VERIFYING YOLO NEXUS ONNX INFERENCE IN-BROWSER ---');
+    const yoloInferenceResult = await evaluate(`
       (async () => {
         const detector = window.__ergoguard.pipeline.ppeDetector;
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 480;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#222';
+        ctx.fillRect(0, 0, 640, 480);
+        ctx.fillStyle = '#ff9900';
+        ctx.fillRect(200, 100, 80, 80);
+        const t0 = performance.now();
+        const res = await detector.detect(canvas, 640, 480);
+        const latencyMs = Math.round(performance.now() - t0);
+        return {
+          state: res.state,
+          itemCount: res.items?.length ?? 0,
+          classes: detector.classes,
+          modelPath: detector.modelPath,
+          latencyMs,
+        };
+      })()
+    `);
+    console.log('✓ YOLO Nexus ONNX Model Inference:', JSON.stringify(yoloInferenceResult, null, 2));
+    if (yoloInferenceResult.state !== 'READY') {
+      throw new Error(`YOLO detector state is ${yoloInferenceResult.state}, expected READY`);
+    }
+
+    console.log('\n--- VERIFYING CUSTOM ONNX ERROR VALIDATION ---');
+
+    // 6. Test invalid ONNX file handling on isolated detector instance (must not crash)
+    const onnxTestResult = await evaluate(`
+      (async () => {
+        const { LocalPPEDetector } = await import('./ppeDetector.js');
+        const testDetector = new LocalPPEDetector();
         try {
           const fakeBuffer = new ArrayBuffer(16);
-          await detector.loadModelFromBuffer(fakeBuffer);
+          await testDetector.loadModelFromBuffer(fakeBuffer);
           return 'unexpected_success';
         } catch (err) {
           return 'caught_error: ' + err.message;
         }
       })()
     `);
-    console.log('✓ Custom ONNX error validation:', onnxTestResult);
+    console.log('✓ Custom ONNX error validation (isolated instance):', onnxTestResult);
 
     console.log('\n--- VERIFYING 3-PERSON MULTI-DETECTION & SKELETONS IN LIVE BROWSER ---');
 

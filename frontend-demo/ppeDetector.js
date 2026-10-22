@@ -5,8 +5,9 @@ export class LocalPPEDetector {
     this.state = 'UNAVAILABLE'; // 'UNAVAILABLE' | 'LOADING' | 'READY' | 'ERROR'
     this.errorMessage = 'PPE MODEL NOT AVAILABLE (No trained ONNX weights provided)';
     this.session = null;
-    this.classes = options.classes ?? ['helmet', 'vest', 'goggles', 'gloves', 'boots'];
-    this.confidenceThreshold = options.confidenceThreshold ?? 0.45;
+    // Verified 6 classes from Nexus3/yolov8n-ppe-detection-6classes
+    this.classes = options.classes ?? ['gloves', 'vest', 'goggles', 'helmet', 'mask', 'safety_shoe'];
+    this.confidenceThreshold = options.confidenceThreshold ?? 0.20;
     this.iouThreshold = options.iouThreshold ?? 0.45;
     this.inputSize = 640;
     this.preprocessCanvas = null;
@@ -19,19 +20,23 @@ export class LocalPPEDetector {
 
     // Verify onnxruntime-web global runtime is available
     if (typeof window !== 'undefined' && window.ort) {
-      window.ort.env.wasm.wasmPaths = (window.location?.origin || '') + '/frontend-demo/vendor/ort/';
+      window.ort.env.wasm.wasmPaths = new URL('./vendor/ort/', window.location.href).href;
     } else {
       this.state = 'UNAVAILABLE';
       this.errorMessage = 'ONNX Runtime Web library is not loaded.';
+      console.warn('[PPEDetector] ONNX Runtime Web library is not loaded on window.');
       return false;
     }
 
     try {
+      console.log(`[PPEDetector] Loading YOLO Nexus ONNX model from: ${this.modelPath}`);
+
       // Test if model file exists before attempting to create inference session
       const headResponse = await fetch(this.modelPath, { method: 'HEAD' });
       if (!headResponse.ok) {
         this.state = 'UNAVAILABLE';
         this.errorMessage = 'PPE MODEL NOT AVAILABLE (yolov8n-ppe.onnx not found)';
+        console.warn(`[PPEDetector] Model file not accessible: ${this.modelPath} (HTTP ${headResponse.status})`);
         return false;
       }
 
@@ -43,10 +48,12 @@ export class LocalPPEDetector {
 
       this.state = 'READY';
       this.errorMessage = null;
+      console.log(`[PPEDetector] Session initialized successfully. Inputs: [${this.session.inputNames.join(', ')}], Outputs: [${this.session.outputNames.join(', ')}], Classes: [${this.classes.join(', ')}], ConfThreshold: ${this.confidenceThreshold}`);
       return true;
     } catch (err) {
       this.state = 'UNAVAILABLE';
       this.errorMessage = `PPE MODEL NOT AVAILABLE (${err.message || 'Model load failed'})`;
+      console.error('[PPEDetector] Initialization error:', err);
       return false;
     }
   }
@@ -83,14 +90,20 @@ export class LocalPPEDetector {
     ctx.drawImage(imageSource, 0, 0, this.inputSize, this.inputSize);
     const imgData = ctx.getImageData(0, 0, this.inputSize, this.inputSize).data;
 
-    const [red, green, blue] = [[], [], []];
-    for (let i = 0; i < imgData.length; i += 4) {
-      red.push(imgData[i] / 255.0);
-      green.push(imgData[i + 1] / 255.0);
-      blue.push(imgData[i + 2] / 255.0);
+    // Fast contiguous Float32Array planar allocation [1, 3, 640, 640]
+    const planeSize = this.inputSize * this.inputSize;
+    const float32Data = new Float32Array(3 * planeSize);
+    for (let i = 0, p = 0; i < imgData.length; i += 4, p++) {
+      float32Data[p] = imgData[i] / 255.0; // R
+      float32Data[planeSize + p] = imgData[i + 1] / 255.0; // G
+      float32Data[2 * planeSize + p] = imgData[i + 2] / 255.0; // B
     }
 
-    const float32Data = new Float32Array([...red, ...green, ...blue]);
+    if (!this.loggedPreprocess) {
+      console.log(`[PPEDetector Preprocess] Verified input: shape=[1, 3, ${this.inputSize}, ${this.inputSize}], layout=NCHW Float32, RGB order normalized [0, 1]`);
+      this.loggedPreprocess = true;
+    }
+
     return new window.ort.Tensor('float32', float32Data, [1, 3, this.inputSize, this.inputSize]);
   }
 
@@ -112,8 +125,18 @@ export class LocalPPEDetector {
       const outputMap = await this.session.run(feeds);
       const outputTensor = outputMap[this.session.outputNames[0]];
 
-      // Output shape is typically [1, 4 + numClasses, 8400]
+      if (!outputTensor || !outputTensor.data) {
+        throw new Error('PPE model returned empty or null output tensor');
+      }
+
+      // Output shape is [1, 4 + numClasses, 8400]
       const detections = this.postprocess(outputTensor.data, outputTensor.dims, originalWidth, originalHeight);
+
+      if (this.frameLogCount === undefined) this.frameLogCount = 0;
+      this.frameLogCount++;
+      if (this.frameLogCount <= 5 || this.frameLogCount % 30 === 0 || detections.length > 0) {
+        console.log(`[PPEDetector] Frame #${this.frameLogCount}: tensor dims=[${outputTensor.dims.join(',')}], detections=${detections.length} (${detections.map((d) => `${d.type}:${(d.confidence * 100).toFixed(0)}%`).join(', ') || 'none'})`);
+      }
 
       return {
         state: 'READY',
@@ -131,9 +154,11 @@ export class LocalPPEDetector {
   }
 
   // Decodes bounding boxes and performs confidence filtering and IoU suppression.
-  postprocess(data, dims, origW, origH) {
+  postprocess(data, dims, originalWidth, originalHeight) {
     const numClasses = dims[1] - 4;
     const numAnchors = dims[2];
+    const origW = (originalWidth && originalWidth > 0) ? originalWidth : this.inputSize;
+    const origH = (originalHeight && originalHeight > 0) ? originalHeight : this.inputSize;
     const scaleX = origW / this.inputSize;
     const scaleY = origH / this.inputSize;
 

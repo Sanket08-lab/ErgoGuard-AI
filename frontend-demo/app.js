@@ -16,6 +16,7 @@ let streamIntervalId = null;
 let streamFrameCounter = 1;
 let currentMode = 'camera'; // 'camera' | 'test'
 let lastWorkerPayload = null;
+let lastPpeItems = [];
 
 // Pipeline orchestrator
 const pipeline = new VisionPipeline({
@@ -108,7 +109,7 @@ function updateModelStatusBadges(state) {
 
   if (state.ppeState === 'READY') {
     badgePpeState.className = 'badge bg-success-subtle text-success border border-success';
-    badgePpeState.textContent = 'PPE: Ready (YOLOv8 ONNX)';
+    badgePpeState.textContent = 'PPE: Ready (YOLOv8 Nexus)';
   } else if (state.ppeState === 'UNAVAILABLE') {
     badgePpeState.className = 'badge bg-warning-subtle text-warning border border-warning';
     badgePpeState.textContent = 'PPE MODEL NOT AVAILABLE';
@@ -344,7 +345,7 @@ const POSE_CONNECTIONS = [
 ];
 
 // Draws video frame, skeletal joints, posture telemetry, and bounding boxes on HTML5 Canvas.
-function renderCanvas(videoSource, workers, isLiveCamera = false) {
+function renderCanvas(videoSource, workers, isLiveCamera = false, ppeItems = []) {
   const width = visualizerCanvas.width;
   const height = visualizerCanvas.height;
 
@@ -373,89 +374,194 @@ function renderCanvas(videoSource, workers, isLiveCamera = false) {
     }
   }
 
-  if (!workers || workers.length === 0) {
-    if (!isLiveCamera) {
-      canvasCtx.fillStyle = '#64748b';
-      canvasCtx.font = '14px system-ui';
-      canvasCtx.textAlign = 'center';
-      canvasCtx.fillText('No active worker detections. Inject frame to visualize.', width / 2, height / 2);
-    }
-    return;
+  // 2. Draw worker skeletons and bounding boxes
+  if (workers && workers.length > 0) {
+    workers.forEach((w) => {
+      // 2a. Draw skeletal bones and joints if pose landmarks are available
+      const rawLm = w.rawNormLandmarks;
+      if (rawLm && Array.isArray(rawLm)) {
+        // Draw bones
+        canvasCtx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+        canvasCtx.lineWidth = 3;
+        POSE_CONNECTIONS.forEach(([startIdx, endIdx]) => {
+          const pt1 = rawLm[startIdx];
+          const pt2 = rawLm[endIdx];
+          if (pt1 && pt2 && (pt1.visibility ?? 1) >= 0.3 && (pt2.visibility ?? 1) >= 0.3) {
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(pt1.x * width, pt1.y * height);
+            canvasCtx.lineTo(pt2.x * width, pt2.y * height);
+            canvasCtx.stroke();
+          }
+        });
+
+        // Draw joint nodes
+        rawLm.forEach((lm) => {
+          if ((lm.visibility ?? 1) >= 0.3) {
+            canvasCtx.beginPath();
+            canvasCtx.arc(lm.x * width, lm.y * height, 4, 0, 2 * Math.PI);
+            canvasCtx.fillStyle = '#38bdf8';
+            canvasCtx.fill();
+            canvasCtx.strokeStyle = '#ffffff';
+            canvasCtx.lineWidth = 1.5;
+            canvasCtx.stroke();
+          }
+        });
+      }
+
+      // 2b. Draw Bounding Box color-coded by severity
+      const b = w.bbox;
+      if (!b) return;
+
+      const x1 = b.x1 ?? b.xmin ?? 0;
+      const y1 = b.y1 ?? b.ymin ?? 0;
+      const x2 = b.x2 ?? b.xmax ?? 0;
+      const y2 = b.y2 ?? b.ymax ?? 0;
+      const boxW = x2 - x1;
+      const boxH = y2 - y1;
+
+      let strokeColor = '#10b981';
+      if (w.severity === 'CRITICAL') strokeColor = '#ef4444';
+      else if (w.severity === 'HIGH') strokeColor = '#f97316';
+      else if (w.severity === 'MEDIUM') strokeColor = '#f59e0b';
+
+      canvasCtx.strokeStyle = strokeColor;
+      canvasCtx.lineWidth = 2.5;
+      canvasCtx.strokeRect(x1, y1, boxW, boxH);
+
+      // Label tag
+      const tagH = 22;
+      const tagW = Math.min(220, Math.max(140, boxW));
+      canvasCtx.fillStyle = strokeColor;
+      canvasCtx.fillRect(x1, Math.max(0, y1 - tagH), tagW, tagH);
+
+      canvasCtx.fillStyle = '#0f172a';
+      canvasCtx.font = 'bold 11px system-ui';
+      canvasCtx.textAlign = 'left';
+      canvasCtx.fillText(`Worker #${w.trackId} | Score: ${w.riskScore} [${w.severity}]`, x1 + 4, Math.max(15, y1 - 7));
+
+      // Telemetry label below box
+      const trunkAngle = w.posture?.angles?.trunkInclinationDeg?.toFixed(0);
+      const postureStr = trunkAngle ? `Trunk: ${trunkAngle}°` : '';
+      const ppeBadge = pipeline.ppeDetector.state === 'READY' ? 'PPE Active' : 'PPE: N/A';
+      canvasCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      canvasCtx.fillRect(x1, Math.min(height - 18, y2 + 2), Math.min(180, boxW), 16);
+      canvasCtx.fillStyle = '#94a3b8';
+      canvasCtx.font = '10px system-ui';
+      canvasCtx.fillText(`${postureStr} | ${ppeBadge}`, x1 + 4, Math.min(height - 6, y2 + 14));
+    });
+  } else if (!isLiveCamera) {
+    canvasCtx.fillStyle = '#64748b';
+    canvasCtx.font = '14px system-ui';
+    canvasCtx.textAlign = 'center';
+    canvasCtx.fillText('No active worker detections. Inject frame to visualize.', width / 2, height / 2);
   }
 
-  workers.forEach((w) => {
-    // 2. Draw skeletal bones and joints if pose landmarks are available
-    const rawLm = w.rawNormLandmarks;
-    if (rawLm && Array.isArray(rawLm)) {
-      // Draw bones
-      canvasCtx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
-      canvasCtx.lineWidth = 3;
-      POSE_CONNECTIONS.forEach(([startIdx, endIdx]) => {
-        const pt1 = rawLm[startIdx];
-        const pt2 = rawLm[endIdx];
-        if (pt1 && pt2 && (pt1.visibility ?? 1) >= 0.3 && (pt2.visibility ?? 1) >= 0.3) {
-          canvasCtx.beginPath();
-          canvasCtx.moveTo(pt1.x * width, pt1.y * height);
-          canvasCtx.lineTo(pt2.x * width, pt2.y * height);
-          canvasCtx.stroke();
-        }
-      });
+  // 3. Draw detected YOLO PPE bounding boxes ON TOP of skeletons and worker boxes
+  const itemsToRender = (ppeItems && ppeItems.length > 0) ? ppeItems : (isLiveCamera ? lastPpeItems : []);
+  if (itemsToRender && Array.isArray(itemsToRender) && itemsToRender.length > 0) {
+    itemsToRender.forEach((item) => {
+      if (!item.bbox || item.bbox.length < 4) return;
+      const [bx1, by1, bx2, by2] = item.bbox;
+      const bw = bx2 - bx1;
+      const bh = by2 - by1;
+      if (bw <= 0 || bh <= 0) return;
 
-      // Draw joint nodes
-      rawLm.forEach((lm) => {
-        if ((lm.visibility ?? 1) >= 0.3) {
-          canvasCtx.beginPath();
-          canvasCtx.arc(lm.x * width, lm.y * height, 4, 0, 2 * Math.PI);
-          canvasCtx.fillStyle = '#38bdf8';
-          canvasCtx.fill();
-          canvasCtx.strokeStyle = '#ffffff';
-          canvasCtx.lineWidth = 1.5;
-          canvasCtx.stroke();
-        }
-      });
-    }
+      const type = (item.type || '').toLowerCase();
+      let strokeColor = '#ffd600'; // Electric Yellow (Helmet)
+      let fillColor = 'rgba(255, 214, 0, 0.16)';
+      let badgeTextColor = '#000000';
+      let icon = '⛑️';
 
-    // 3. Draw Bounding Box color-coded by severity
-    const b = w.bbox;
-    if (!b) return;
+      if (type.includes('vest')) {
+        strokeColor = '#ff6d00'; // Neon Safety Orange
+        fillColor = 'rgba(255, 109, 0, 0.16)';
+        badgeTextColor = '#ffffff';
+        icon = '🦺';
+      } else if (type.includes('glove')) {
+        strokeColor = '#e040fb'; // Neon Magenta
+        fillColor = 'rgba(224, 64, 251, 0.16)';
+        badgeTextColor = '#ffffff';
+        icon = '🧤';
+      } else if (type.includes('goggle')) {
+        strokeColor = '#00e5ff'; // Bright Aqua
+        fillColor = 'rgba(0, 229, 255, 0.16)';
+        badgeTextColor = '#000000';
+        icon = '🥽';
+      } else if (type.includes('mask')) {
+        strokeColor = '#00e676'; // Bright Spring Green
+        fillColor = 'rgba(0, 230, 118, 0.16)';
+        badgeTextColor = '#000000';
+        icon = '😷';
+      } else if (type.includes('shoe')) {
+        strokeColor = '#ff9100'; // Amber
+        fillColor = 'rgba(255, 145, 0, 0.16)';
+        badgeTextColor = '#000000';
+        icon = '🥾';
+      }
 
-    const x1 = b.x1 ?? b.xmin ?? 0;
-    const y1 = b.y1 ?? b.ymin ?? 0;
-    const x2 = b.x2 ?? b.xmax ?? 0;
-    const y2 = b.y2 ?? b.ymax ?? 0;
-    const boxW = x2 - x1;
-    const boxH = y2 - y1;
+      // Semi-transparent detection region fill
+      canvasCtx.fillStyle = fillColor;
+      canvasCtx.fillRect(bx1, by1, bw, bh);
 
-    let strokeColor = '#10b981';
-    if (w.severity === 'CRITICAL') strokeColor = '#ef4444';
-    else if (w.severity === 'HIGH') strokeColor = '#f97316';
-    else if (w.severity === 'MEDIUM') strokeColor = '#f59e0b';
+      // Solid, high-visibility perimeter bounding box
+      canvasCtx.strokeStyle = strokeColor;
+      canvasCtx.lineWidth = 2.5;
+      canvasCtx.strokeRect(bx1, by1, bw, bh);
 
-    canvasCtx.strokeStyle = strokeColor;
-    canvasCtx.lineWidth = 2.5;
-    canvasCtx.strokeRect(x1, y1, boxW, boxH);
+      // Corner accent brackets for crisp industrial HUD aesthetic
+      const cornerLen = Math.min(10, Math.max(4, Math.min(bw, bh) / 4));
+      canvasCtx.lineWidth = 3.5;
+      // Top-left
+      canvasCtx.beginPath();
+      canvasCtx.moveTo(bx1, by1 + cornerLen);
+      canvasCtx.lineTo(bx1, by1);
+      canvasCtx.lineTo(bx1 + cornerLen, by1);
+      canvasCtx.stroke();
+      // Top-right
+      canvasCtx.beginPath();
+      canvasCtx.moveTo(bx2 - cornerLen, by1);
+      canvasCtx.lineTo(bx2, by1);
+      canvasCtx.lineTo(bx2, by1 + cornerLen);
+      canvasCtx.stroke();
+      // Bottom-left
+      canvasCtx.beginPath();
+      canvasCtx.moveTo(bx1, by2 - cornerLen);
+      canvasCtx.lineTo(bx1, by2);
+      canvasCtx.lineTo(bx1 + cornerLen, by2);
+      canvasCtx.stroke();
+      // Bottom-right
+      canvasCtx.beginPath();
+      canvasCtx.moveTo(bx2 - cornerLen, by2);
+      canvasCtx.lineTo(bx2, by2);
+      canvasCtx.lineTo(bx2, by2 - cornerLen);
+      canvasCtx.stroke();
 
-    // Label tag
-    const tagH = 22;
-    const tagW = Math.min(220, Math.max(140, boxW));
-    canvasCtx.fillStyle = strokeColor;
-    canvasCtx.fillRect(x1, Math.max(0, y1 - tagH), tagW, tagH);
+      // High-contrast Pill Badge Label
+      const confPercent = Math.round(item.confidence * 100);
+      const labelText = `${icon} ${item.type.toUpperCase()} ${confPercent}%`;
+      canvasCtx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+      const textMetrics = canvasCtx.measureText(labelText);
+      const tagW = textMetrics.width + 12;
+      const tagH = 18;
 
-    canvasCtx.fillStyle = '#0f172a';
-    canvasCtx.font = 'bold 11px system-ui';
-    canvasCtx.textAlign = 'left';
-    canvasCtx.fillText(`Worker #${w.trackId} | Score: ${w.riskScore} [${w.severity}]`, x1 + 4, Math.max(15, y1 - 7));
+      // Position badge above box if space permits, otherwise place inside top
+      const tagY = by1 >= (tagH + 2) ? by1 - tagH - 2 : by1 + 2;
 
-    // Telemetry label below box
-    const trunkAngle = w.posture?.angles?.trunkInclinationDeg?.toFixed(0);
-    const postureStr = trunkAngle ? `Trunk: ${trunkAngle}°` : '';
-    const ppeBadge = pipeline.ppeDetector.state === 'READY' ? 'PPE Active' : 'PPE: N/A';
-    canvasCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-    canvasCtx.fillRect(x1, Math.min(height - 18, y2 + 2), Math.min(180, boxW), 16);
-    canvasCtx.fillStyle = '#94a3b8';
-    canvasCtx.font = '10px system-ui';
-    canvasCtx.fillText(`${postureStr} | ${ppeBadge}`, x1 + 4, Math.min(height - 6, y2 + 14));
-  });
+      canvasCtx.fillStyle = strokeColor;
+      if (typeof canvasCtx.roundRect === 'function') {
+        canvasCtx.beginPath();
+        canvasCtx.roundRect(bx1, tagY, tagW, tagH, 3);
+        canvasCtx.fill();
+      } else {
+        canvasCtx.fillRect(bx1, tagY, tagW, tagH);
+      }
+
+      canvasCtx.fillStyle = badgeTextColor;
+      canvasCtx.textAlign = 'left';
+      canvasCtx.textBaseline = 'middle';
+      canvasCtx.fillText(labelText, bx1 + 6, tagY + (tagH / 2));
+    });
+  }
 }
 
 // Bounded development-only diagnostic buffer (maximum 50 records)
@@ -514,16 +620,23 @@ function processFrameInput(framePayload, isLiveCamera = false) {
   recordDiagnosticFrame(result, framePayload);
 
   lastWorkerPayload = result.workers;
+  lastPpeItems = framePayload.items || [];
   renderWorkerCards(result.workers);
   renderFindingsTabs(result.workers);
-  renderCanvas(webcamVideo, result.workers, isLiveCamera);
+  renderCanvas(webcamVideo, result.workers, isLiveCamera, lastPpeItems);
   updateRiskKpis(result.overallRisk.score, result.overallRisk.severity, result.workers.length);
 
   // Diagnostic log for real-time monitoring and multi-person tracking verification
   if (result.workers?.length > 0) {
     const workerSummaries = result.workers.map((w) => {
-      const postFinding = (w.findings || []).find((f) => f.type === 'UnsafePosture');
-      const findingStr = postFinding ? `UnsafePosture(+${postFinding.points}pt)` : 'compliant';
+      const violFindings = (w.findings || []).filter((f) => f.status === 'VIOLATION');
+      const uncFindings = (w.findings || []).filter((f) => f.status === 'UNCERTAIN');
+      let findingStr = 'compliant';
+      if (violFindings.length > 0) {
+        findingStr = violFindings.map((f) => `${f.type}(+${f.points}pt)`).join(', ');
+      } else if (uncFindings.length > 0) {
+        findingStr = uncFindings.map((f) => `${f.type}[UNKNOWN]`).join(', ');
+      }
       const hasSkeleton = Boolean(w.rawNormLandmarks && w.rawNormLandmarks.length > 0);
       return `Worker#${w.trackId}[${w.severity}, score=${w.riskScore}, posture=${w.posture?.postureState ?? 'NORMAL'}, skeleton=${hasSkeleton ? 'active' : 'none'}, ${findingStr}]`;
     }).join(' | ');
@@ -550,7 +663,7 @@ async function runCameraLoop(timestamp) {
     }
 
     const latency = Math.round(performance.now() - frameStartTime);
-    fpsTelemetry.textContent = `FPS: ${fps} | Latency: ${latency}ms | Model: Pose Lite`;
+    fpsTelemetry.textContent = `FPS: ${fps} | Latency: ${latency}ms | Models: Pose Lite + YOLO Nexus PPE`;
   }
 
   animationFrameId = requestAnimationFrame(runCameraLoop);
@@ -616,6 +729,7 @@ function stopWebcam() {
     fpsTelemetry.textContent = 'FPS: 0 | Latency: 0ms';
 
     // Render cleared canvas
+    lastPpeItems = [];
     renderCanvas(null, [], false);
   }
 }
@@ -951,6 +1065,7 @@ if (typeof window !== 'undefined') {
     processFrameInput,
     renderCanvas,
     visualizerCanvas,
+    getLastPpeItems: () => [...lastPpeItems],
     getDiagnostics: () => [...devDiagnosticsBuffer],
   };
 }

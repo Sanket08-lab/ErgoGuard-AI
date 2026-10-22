@@ -30,8 +30,9 @@ function resolveRuleEvaluation(ruleType, ppeFindings, postureFindings, fallFindi
   let status = 'COMPLIANT';
 
   switch (ruleType) {
-    case 'MissingHardhat': {
-      matchedFinding = ppeFindings.find((f) => f.type === 'MissingHardhat' || f.type === 'UncertainHardhat');
+    case 'MissingHardhat':
+    case 'MissingHelmet': {
+      matchedFinding = ppeFindings.find((f) => f.type === 'MissingHardhat' || f.type === 'MissingHelmet' || f.type === 'UncertainHardhat' || f.type === 'UncertainHelmet');
       if (matchedFinding) {
         status = matchedFinding.status;
       } else {

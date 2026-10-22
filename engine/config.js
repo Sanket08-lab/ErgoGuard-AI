@@ -37,6 +37,7 @@ export const CONFIG = {
       critical: 80,  // Severe sustained stoop >= 60° for >= 3000ms (CRITICAL)
     },
     MissingHardhat: { base: 55 },
+    MissingHelmet: { base: 55 },
     MissingVest: { base: 35 },
     Fatigue: { base: 45 },
     WorkerFatigue: { base: 45 },

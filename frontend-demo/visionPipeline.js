@@ -161,20 +161,79 @@ export class VisionPipeline {
           visibility: lm.visibility,
         }));
 
-        // When PPE model is unavailable, provide uncertain sentinel values to prevent false violation or compliance
+        // Associate detected PPE items with this worker's anatomical bounds
         let ppe = null;
-        if (this.ppeDetector.state === 'READY' && ppeResult.items.length > 0) {
-          // If trained PPE detections exist, filter items near this worker's head and torso
-          const helmetItem = ppeResult.items.find((i) => i.type.includes('helmet') || i.type.includes('hardhat'));
-          const vestItem = ppeResult.items.find((i) => i.type.includes('vest'));
-          ppe = {
-            helmet: helmetItem
-              ? { detected: true, confidence: helmetItem.confidence, bounding_box: helmetItem.bbox }
-              : { detected: false, confidence: 0.1, bounding_box: null },
-            vest: vestItem
-              ? { detected: true, confidence: vestItem.confidence, bounding_box: vestItem.bbox }
-              : { detected: false, confidence: 0.1, bounding_box: null },
-          };
+        if (this.ppeDetector.state === 'READY') {
+          const boxHeight = bbox.height;
+          // Head region: upper 35% of worker box with 16px lateral tolerance
+          const headBox = [bbox.x1 - 16, bbox.y1 - 16, bbox.x2 + 16, bbox.y1 + boxHeight * 0.35];
+          // Torso region: middle 15% - 70% of worker box with 16px lateral tolerance
+          const torsoBox = [bbox.x1 - 16, bbox.y1 + boxHeight * 0.15, bbox.x2 + 16, bbox.y1 + boxHeight * 0.70];
+
+          function overlaps(boxA, boxB) {
+            if (!boxA || !boxB) return false;
+            const ix = Math.max(0, Math.min(boxA[2], boxB[2]) - Math.max(boxA[0], boxB[0]));
+            const iy = Math.max(0, Math.min(boxA[3], boxB[3]) - Math.max(boxA[1], boxB[1]));
+            return ix * iy > 0;
+          }
+
+          const helmetItem = (ppeResult.items || []).find(
+            (i) => (i.type.includes('helmet') || i.type.includes('hardhat')) && overlaps(i.bbox, headBox)
+          );
+          const vestItem = (ppeResult.items || []).find(
+            (i) => (i.type.includes('vest') || i.type.includes('jacket')) && overlaps(i.bbox, torsoBox)
+          );
+
+          // Anatomical visibility checks using MediaPipe landmarks
+          const nose = rawLandmarks[0];
+          const le = rawLandmarks[7];
+          const re = rawLandmarks[8];
+          const ley = rawLandmarks[2];
+          const rey = rawLandmarks[5];
+          const ls = rawLandmarks[11];
+          const rs = rawLandmarks[12];
+          const lh = rawLandmarks[23];
+          const rh = rawLandmarks[24];
+
+          // Head visibility: at least one cranial or facial landmark with sufficient confidence
+          const headVisible = Boolean(
+            (nose?.visibility ?? 0) >= 0.35 ||
+            (le?.visibility ?? 0) >= 0.35 ||
+            (re?.visibility ?? 0) >= 0.35 ||
+            (ley?.visibility ?? 0) >= 0.35 ||
+            (rey?.visibility ?? 0) >= 0.35
+          );
+
+          // Torso visibility: shoulder landmarks and upper body presence
+          const torsoVisible = Boolean(
+            ((ls?.visibility ?? 0) >= 0.35 || (rs?.visibility ?? 0) >= 0.35) &&
+            ((lh?.visibility ?? 0) >= 0.30 || (rh?.visibility ?? 0) >= 0.30 || boxHeight >= 120)
+          );
+
+          // Reliable PPE evaluation:
+          // 1. If item detected -> compliant (detected: true with bounding_box)
+          // 2. Else if region visible -> confirmed missing (detected: false, raises MissingHardhat/MissingVest)
+          // 3. Else (region obscured/low confidence) -> UNCERTAIN / UNKNOWN (confidence 0.2 below minConf, 0 penalty)
+          const helmet = helmetItem
+            ? { detected: true, confidence: helmetItem.confidence, bounding_box: helmetItem.bbox }
+            : (headVisible
+              ? { detected: false, confidence: 0.0, bounding_box: null }
+              : { detected: true, confidence: 0.2, bounding_box: null });
+
+          const vest = vestItem
+            ? { detected: true, confidence: vestItem.confidence, bounding_box: vestItem.bbox }
+            : (torsoVisible
+              ? { detected: false, confidence: 0.0, bounding_box: null }
+              : { detected: true, confidence: 0.2, bounding_box: null });
+
+          ppe = { helmet, vest };
+
+          // Diagnostic log for worker-to-PPE overlap and compliance decision
+          const vestIoA = vestItem && overlaps(vestItem.bbox, torsoBox) ? 1.0 : 0.0;
+          const helmetIoA = helmetItem && overlaps(helmetItem.bbox, headBox) ? 1.0 : 0.0;
+          const helmetStateStr = helmetItem ? 'detected' : (headVisible ? 'MISSING' : 'UNKNOWN');
+          const vestStateStr = vestItem ? 'detected' : (torsoVisible ? 'MISSING' : 'UNKNOWN');
+          console.log(`[VisionPipeline] Worker #${trackId} PPE: bbox=[${bbox.x1},${bbox.y1},${bbox.x2},${bbox.y2}] | Head: ${headVisible ? 'visible' : 'obscured'}, Helmet: ${helmetStateStr} (conf=${helmet.confidence.toFixed(2)}, IoA=${helmetIoA.toFixed(2)}) | Torso: ${torsoVisible ? 'visible' : 'obscured'}, Vest: ${vestStateStr} (conf=${vest.confidence.toFixed(2)}, IoA=${vestIoA.toFixed(2)})`);
         } else {
           // Explicit truthful unavailable state: confidence 0.2 below minConf (0.4) flags UNCERTAIN with 0 points
           ppe = {
@@ -192,9 +251,9 @@ export class VisionPipeline {
         };
       }).filter(Boolean);
 
-      // Diagnostic logging: reports raw count, filtered count, and engine delivery count
-      if (rawPosesReturned > 0 || workers.length > 0) {
-        console.log(`[VisionPipeline] Frame ${frameId}: rawPoses=${rawPosesReturned}, workersAfterFilter=${workers.length}, passedToEngine=${workers.length}`);
+      // Diagnostic logging: reports raw count, filtered count, engine delivery count, and PPE detections count
+      if (rawPosesReturned > 0 || workers.length > 0 || (ppeResult.items && ppeResult.items.length > 0)) {
+        console.log(`[VisionPipeline] Frame ${frameId}: rawPoses=${rawPosesReturned}, workers=${workers.length}, ppeDetections=${ppeResult.items?.length || 0}`);
       }
 
       return {
@@ -202,7 +261,8 @@ export class VisionPipeline {
         timestamp: now,
         camera_id: 'webcam_local',
         workers,
-        rawPoseCount: detectedPoses.length,
+        items: ppeResult.items || [],
+        rawPoseCount: rawPosesReturned,
         poseStatus: this.poseDetector.state,
         ppeStatus: this.ppeDetector.state,
         ppeMessage: this.ppeDetector.errorMessage,

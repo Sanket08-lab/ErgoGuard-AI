@@ -424,7 +424,7 @@ export function ppeRule(person, items, cfg) {
       status: helmetResult.status,
       type,
       confidence: isViolation ? personConf : (helmetResult.evidenceDetails.bestCandidate?.confidence ?? personConf),
-      points: isViolation ? (violationsCfg.MissingHardhat?.base ?? 0) : 0,
+      points: isViolation ? (violationsCfg.MissingHardhat?.base ?? violationsCfg.MissingHelmet?.base ?? 0) : 0,
       evidence: helmetResult.evidenceDetails,
     });
   }
