@@ -1,4 +1,4 @@
-import { angleFromVertical } from '../geometry.js';
+import { angleFromVertical, angleAt } from '../geometry.js';
 import { CONFIG } from '../config.js';
 
 // Parses bounding box into standard dimensions [x1, y1, x2, y2, width, height, centerY].
@@ -119,16 +119,56 @@ function evaluatePoseKinematics(landmarksInput, box, options = {}) {
     };
   }
 
-  const shoulderPts = [ls, rs].filter((p) => p && p.visibility >= minVisibility);
-  const hipPts = [lh, rh].filter((p) => p && p.visibility >= minVisibility);
-  const midShoulder = {
-    x: shoulderPts.reduce((acc, p) => acc + p.x, 0) / shoulderPts.length,
-    y: shoulderPts.reduce((acc, p) => acc + p.y, 0) / shoulderPts.length,
-  };
-  const midHip = {
-    x: hipPts.reduce((acc, p) => acc + p.x, 0) / hipPts.length,
-    y: hipPts.reduce((acc, p) => acc + p.y, 0) / hipPts.length,
-  };
+  // Aligns shoulder and hip reference points symmetrically or ipsilaterally to prevent cross-body skew during partial crops.
+  let midShoulder, midHip;
+  const bothShouldersAvailable = ls && rs;
+  const bothHipsAvailable = lh && rh;
+
+  if (bothShouldersAvailable && bothHipsAvailable) {
+    midShoulder = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
+    midHip = { x: (lh.x + rh.x) / 2, y: (lh.y + rh.y) / 2 };
+  } else if (bothShouldersAvailable && !bothHipsAvailable) {
+    if (lh && lh.visibility >= minVisibility && ls) {
+      midShoulder = { x: ls.x, y: ls.y };
+      midHip = { x: lh.x, y: lh.y };
+    } else if (rh && rh.visibility >= minVisibility && rs) {
+      midShoulder = { x: rs.x, y: rs.y };
+      midHip = { x: rh.x, y: rh.y };
+    } else {
+      midShoulder = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
+      const hipPts = [lh, rh].filter((p) => p && p.visibility >= minVisibility);
+      midHip = {
+        x: hipPts.reduce((acc, p) => acc + p.x, 0) / hipPts.length,
+        y: hipPts.reduce((acc, p) => acc + p.y, 0) / hipPts.length,
+      };
+    }
+  } else if (!bothShouldersAvailable && bothHipsAvailable) {
+    if (ls && ls.visibility >= minVisibility && lh) {
+      midShoulder = { x: ls.x, y: ls.y };
+      midHip = { x: lh.x, y: lh.y };
+    } else if (rs && rs.visibility >= minVisibility && rh) {
+      midShoulder = { x: rs.x, y: rs.y };
+      midHip = { x: rh.x, y: rh.y };
+    } else {
+      const shoulderPts = [ls, rs].filter((p) => p && p.visibility >= minVisibility);
+      midShoulder = {
+        x: shoulderPts.reduce((acc, p) => acc + p.x, 0) / shoulderPts.length,
+        y: shoulderPts.reduce((acc, p) => acc + p.y, 0) / shoulderPts.length,
+      };
+      midHip = { x: (lh.x + rh.x) / 2, y: (lh.y + rh.y) / 2 };
+    }
+  } else {
+    const shoulderPts = [ls, rs].filter((p) => p && p.visibility >= minVisibility);
+    const hipPts = [lh, rh].filter((p) => p && p.visibility >= minVisibility);
+    midShoulder = {
+      x: shoulderPts.reduce((acc, p) => acc + p.x, 0) / shoulderPts.length,
+      y: shoulderPts.reduce((acc, p) => acc + p.y, 0) / shoulderPts.length,
+    };
+    midHip = {
+      x: hipPts.reduce((acc, p) => acc + p.x, 0) / hipPts.length,
+      y: hipPts.reduce((acc, p) => acc + p.y, 0) / hipPts.length,
+    };
+  }
 
   // 2D inclination from vertical in image plane (gravity aligns with positive Y downward)
   const dx = midHip.x - midShoulder.x;
@@ -136,19 +176,23 @@ function evaluatePoseKinematics(landmarksInput, box, options = {}) {
   const angleVert2D = (Math.atan2(Math.abs(dx), Math.abs(dy)) * 180) / Math.PI;
   const torsoFloorAngle = Math.max(0, Math.min(90, Math.round((90.0 - angleVert2D) * 10) / 10));
 
-  // Compute torso aspect ratio (height / width) strictly from trunk keypoints to decouple arm positions
+  // Determine if coordinates are normalized (0-1) or pixel-based
+  const isNormalizedCoords = midHip.y <= 2.0 && midShoulder.y <= 2.0;
+  const minTorsoHeight = isNormalizedCoords ? 0.05 : 20.0;
   const torsoHeight = Math.abs(dy);
+
   const shoulderWidth = (ls && rs) ? Math.abs(rs.x - ls.x) : 0;
   const hipWidth = (lh && rh) ? Math.abs(rh.x - lh.x) : 0;
-  const torsoWidth = Math.max(shoulderWidth, hipWidth, 20);
+  const torsoWidth = Math.max(shoulderWidth, hipWidth, minTorsoHeight);
   const torsoAspectRatio = Math.round((torsoHeight / torsoWidth) * 100) / 100;
 
   // Upright torso: spine angle > 45° from floor, shoulders positioned above hips (dy > 0)
-  const isUprightTorso = torsoFloorAngle > 45.0 && dy > 0 && torsoHeight >= 20;
+  const isUprightTorso = torsoFloorAngle > 45.0 && dy > 0 && torsoHeight >= minTorsoHeight;
 
   // Determine if lower extremities are supporting the pelvis upright (standing or bending)
-  const anklePts = [la, ra].filter((p) => p && p.visibility >= 0.25);
-  const kneePts = [lk, rk].filter((p) => p && p.visibility >= 0.25);
+  const minLegVisibility = options.minLegVisibility ?? CONFIG.minConf?.landmark ?? 0.40;
+  const anklePts = [la, ra].filter((p) => p && p.visibility >= minLegVisibility);
+  const kneePts = [lk, rk].filter((p) => p && p.visibility >= minLegVisibility);
   const lowerPts = anklePts.length > 0 ? anklePts : kneePts;
   const hasLowerExtremities = lowerPts.length > 0;
 
@@ -174,15 +218,48 @@ function evaluatePoseKinematics(landmarksInput, box, options = {}) {
     const legDy = midLower.y - midHip.y;
     const legAngleVert = (Math.atan2(Math.abs(legDx), Math.abs(legDy)) * 180) / Math.PI;
 
-    // Standing leg support: hips elevated above feet/knees and leg axis predominantly vertical
-    if (normalizedDy >= 0.18 && legAngleVert < 50.0 && legDy > 0) {
+    // Standing leg support: hips elevated above feet/knees (standing, leaning, or bending over equipment)
+    if (legDy > 0 && ((normalizedDy >= 0.18 && legAngleVert < 65.0) || normalizedDy >= 0.30)) {
       isStandingLegsSupported = true;
     }
   }
 
+  // Calculate knee flexion angles when lower body is observed to recognize crouching, squatting, or sitting
+  let isCrouchingOrSitting = false;
+  let minKneeAngle = null;
+
+  const hasLeftKnee = Boolean(lh && lk && la && (lh.visibility >= minLegVisibility) && (lk.visibility >= minLegVisibility) && (la.visibility >= minLegVisibility));
+  const hasRightKnee = Boolean(rh && rk && ra && (rh.visibility >= minLegVisibility) && (rk.visibility >= minLegVisibility) && (ra.visibility >= minLegVisibility));
+
+  if (hasLeftKnee || hasRightKnee) {
+    const leftKneeAngle = hasLeftKnee ? angleAt(lh, lk, la) : 180;
+    const rightKneeAngle = hasRightKnee ? angleAt(rh, rk, ra) : 180;
+    minKneeAngle = Math.min(hasLeftKnee ? leftKneeAngle : Infinity, hasRightKnee ? rightKneeAngle : Infinity);
+
+    // Deep knee flexion (angle < 130°) indicates crouching, squatting, or sitting
+    if (minKneeAngle < 130.0) {
+      isCrouchingOrSitting = true;
+    }
+  }
+
+  const nosePt = lmMap.get(0);
+  const lePt = lmMap.get(7);
+  const rePt = lmMap.get(8);
+  const hasHead = Boolean((nosePt && nosePt.visibility >= 0.30) || (lePt && lePt.visibility >= 0.30) || (rePt && rePt.visibility >= 0.30));
+
+  const hasBilateralTorso = Boolean(
+    (ls && ls.visibility >= 0.45 && rs && rs.visibility >= 0.45) ||
+    (ls && ls.visibility >= 0.45 && lh && lh.visibility >= 0.45) ||
+    (rs && rs.visibility >= 0.45 && rh && rh.visibility >= 0.45)
+  );
+
   return {
     hasLandmarks: true,
     isReliable: true,
+    hasBilateralTorso,
+    hasHead,
+    isCrouchingOrSitting,
+    minKneeAngle,
     torsoFloorAngle,
     torsoAspectRatio,
     isUprightTorso,
@@ -293,13 +370,21 @@ export function fallRule(person, landmarks = null, trackState = {}, options = {}
     } else if (kinematics.isStandingLegsSupported) {
       // Person is supported on standing legs (e.g. deep forward bend or reaching down).
       isFloorPosture = false;
+    } else if (kinematics.isCrouchingOrSitting && torsoFloorAngle > torsoFloorAngleThreshold) {
+      // Worker is crouching, squatting, or sitting on heels/bench with an elevated/diagonal torso.
+      // Spine is NOT horizontal along the floor plane.
+      isFloorPosture = false;
     } else if (!kinematics.hasLowerExtremities) {
       // Lower body is missing/occluded from camera frame; cannot verify ground level support.
       // Return UNCERTAIN instead of confirming a false fall.
       isUncertainEvidence = true;
       uncertainReason = 'Worker torso is angled, but lower extremities are not visible to confirm ground contact.';
+    } else if (!kinematics.hasBilateralTorso) {
+      // Landmarks lack bilateral torso evidence (e.g. unilateral or noisy detection)
+      isUncertainEvidence = true;
+      uncertainReason = 'Worker aspect ratio collapsed, but bilateral torso landmarks lack sufficient confidence to confirm a fall.';
     } else {
-      // Reliable landmarks confirm absence of standing leg support AND horizontal torso
+      // Reliable bilateral landmarks confirm absence of standing leg support AND horizontal torso
       const isTorsoHorizontal = torsoFloorAngle !== null && torsoFloorAngle <= torsoFloorAngleThreshold;
       if (isTorsoHorizontal) {
         isFloorPosture = true;

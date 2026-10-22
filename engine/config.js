@@ -12,6 +12,11 @@ export const CONFIG = {
     trunkBendDeg: 60,
     stoopTrunkDeg: 45,
     straightKneeDeg: 150,
+    briefBendGraceMs: 1500,     // < 1500ms: brief transient movement (0 points)
+    sustainedBendMs: 3000,      // >= 3000ms: sustained hazard escalation (HIGH / CRITICAL)
+    hysteresisMarginDeg: 3.0,   // Fluctuating angle deadband margin
+    minPersonHeightPx: 120,
+    minTorsoLengthPx: 25,
   },
 
   // Bounding box vertical fractions [ymin, ymax], minimum IoA overlap, and minimum person pixel height for PPE checks.
@@ -26,7 +31,11 @@ export const CONFIG = {
   // Base penalty score points assigned to each safety violation event type.
   violations: {
     FallEvent: { base: 90 },
-    UnsafePosture: { base: 40 },
+    UnsafePosture: {
+      base: 40,      // Moderate stoop >= 1500ms (MEDIUM)
+      high: 60,      // Sustained moderate stoop >= 3000ms (HIGH)
+      critical: 80,  // Severe sustained stoop >= 60° for >= 3000ms (CRITICAL)
+    },
     MissingHardhat: { base: 55 },
     MissingVest: { base: 35 },
     Fatigue: { base: 45 },

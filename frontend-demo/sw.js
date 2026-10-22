@@ -1,7 +1,7 @@
 // ErgoGuard-AI Offline Service Worker
 // Pre-caches application shell, safety engine modules, vendor WebAssembly runtimes, and local vision models.
 
-const CACHE_NAME = 'ergoguard-ai-v2';
+const CACHE_NAME = 'ergoguard-ai-v4';
 
 const PRECACHE_ASSETS = [
   './index.html',

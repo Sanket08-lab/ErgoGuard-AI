@@ -45,7 +45,15 @@ const cameraStandbyOverlay = document.getElementById('cameraStandbyOverlay');
 const streamWatermark = document.getElementById('streamWatermark');
 const fpsTelemetry = document.getElementById('fpsTelemetry');
 const cameraControls = document.getElementById('cameraControls');
+const videoUploadControls = document.getElementById('videoUploadControls');
 const testHarnessControls = document.getElementById('testHarnessControls');
+
+const videoFileInput = document.getElementById('videoFileInput');
+const btnPlayVideo = document.getElementById('btnPlayVideo');
+const btnPauseVideo = document.getElementById('btnPauseVideo');
+const btnRestartVideo = document.getElementById('btnRestartVideo');
+const videoStatusMsg = document.getElementById('videoStatusMsg');
+const videoLoopToggle = document.getElementById('videoLoopToggle');
 
 const btnStartCamera = document.getElementById('btnStartCamera');
 const btnStopCamera = document.getElementById('btnStopCamera');
@@ -235,7 +243,8 @@ function renderWorkerCards(workers) {
       const isUnc = f.status === 'UNCERTAIN';
       const isSkip = f.status === 'SKIPPED';
       const cls = isViol ? 'violation' : (isUnc ? 'uncertain' : (isSkip ? 'skipped' : 'compliant'));
-      return `<span class="finding-chip ${cls}">${f.type || f.status} (+${f.points || 0}pt)</span>`;
+      const sevBadge = f.evidence?.severity ? ` [${f.evidence.severity}]` : '';
+      return `<span class="finding-chip ${cls}">${f.type || f.status}${sevBadge} (+${f.points || 0}pt)</span>`;
     }).join(' ') || '<span class="text-muted small">No safety findings flagged</span>';
 
     const bboxStr = w.bbox ? `[${Math.round(w.bbox.x1 ?? 0)}, ${Math.round(w.bbox.y1 ?? 0)}, ${Math.round(w.bbox.x2 ?? 0)}, ${Math.round(w.bbox.y2 ?? 0)}]` : 'N/A';
@@ -269,6 +278,7 @@ function renderFindingsTabs(workers) {
   postureFindingsContent.innerHTML = postureWorkers.map((item) => {
     const post = item.posture;
     if (!post || !post.angles) return `<div class="text-muted py-1">Worker #${item.workerId}: No posture telemetry available.</div>`;
+    const durSec = post.angles.stoopDurationMs ? ` | Stoop: <strong class="text-light">${(post.angles.stoopDurationMs / 1000).toFixed(1)}s</strong>` : '';
     return `
       <div class="border-bottom border-secondary pb-1 mb-1">
         <strong>Worker #${item.workerId}:</strong>
@@ -276,7 +286,7 @@ function renderFindingsTabs(workers) {
         <div class="text-muted mt-1" style="font-size:0.75rem;">
           Trunk Inclination: <strong class="text-light">${post.angles.trunkInclinationDeg?.toFixed(1) ?? 'N/A'}°</strong> |
           Neck Flexion: <strong class="text-light">${post.angles.neckFlexionDeg?.toFixed(1) ?? 'N/A'}°</strong> |
-          Min Knee Angle: <strong class="text-light">${post.angles.minKneeAngleDeg?.toFixed(1) ?? 'N/A'}°</strong>
+          Min Knee Angle: <strong class="text-light">${post.angles.minKneeAngleDeg?.toFixed(1) ?? 'N/A'}°</strong>${durSec}
         </div>
       </div>
     `;
@@ -448,6 +458,43 @@ function renderCanvas(videoSource, workers, isLiveCamera = false) {
   });
 }
 
+// Bounded development-only diagnostic buffer (maximum 50 records)
+const devDiagnosticsBuffer = [];
+
+function recordDiagnosticFrame(result, framePayload) {
+  if (!result || !result.workers) return;
+  for (const w of result.workers) {
+    const postureFinding = (w.findings || []).find((f) => f.type === 'UnsafePosture');
+    const record = {
+      timestamp: result.timestamp,
+      workerId: w.trackId,
+      landmarkConfidence: w.bbox?.confidence ?? 1.0,
+      landmarksValid: Boolean(w.landmarks && w.landmarks.length >= 25),
+      trunkInclinationDeg: w.posture?.angles?.trunkInclinationDeg ?? null,
+      trunkInclinationDefinition: '2D image-plane torso inclination from vertical (0°=upright, 90°=horizontal)',
+      leftKneeAngleDeg: w.posture?.angles?.leftKneeAngleDeg ?? null,
+      rightKneeAngleDeg: w.posture?.angles?.rightKneeAngleDeg ?? null,
+      minKneeAngleDeg: w.posture?.angles?.minKneeAngleDeg ?? null,
+      postureClass: w.posture?.postureState ?? 'UNKNOWN',
+      postureDurationMs: w.posture?.angles?.stoopDurationMs ?? 0,
+      isHazardous: Boolean(postureFinding),
+      reason: postureFinding?.evidence?.reason || w.posture?.description || 'Ergonomically compliant',
+      violationPoints: postureFinding ? postureFinding.points : 0,
+      violationSeverity: postureFinding?.evidence?.severity ?? (postureFinding ? 'MEDIUM' : 'LOW'),
+      workerRiskScore: w.riskScore,
+      workerSeverity: w.severity,
+      overallRiskScore: result.overallRisk?.score ?? 0,
+      overallSeverity: result.overallRisk?.severity ?? 'LOW',
+      fallState: w.fall?.fallState ?? 'NORMAL',
+      isFallen: Boolean(w.fall?.isFallen),
+    };
+    devDiagnosticsBuffer.push(record);
+    if (devDiagnosticsBuffer.length > 50) {
+      devDiagnosticsBuffer.shift();
+    }
+  }
+}
+
 // Dispatches an adapted frame payload into the RiskEngine orchestrator and reflects output on UI.
 function processFrameInput(framePayload, isLiveCamera = false) {
   if (!framePayload) return null;
@@ -463,19 +510,37 @@ function processFrameInput(framePayload, isLiveCamera = false) {
     });
   }
 
+  // Record bounded diagnostic telemetry
+  recordDiagnosticFrame(result, framePayload);
+
   lastWorkerPayload = result.workers;
   renderWorkerCards(result.workers);
   renderFindingsTabs(result.workers);
   renderCanvas(webcamVideo, result.workers, isLiveCamera);
   updateRiskKpis(result.overallRisk.score, result.overallRisk.severity, result.workers.length);
+
+  // Diagnostic log for real-time monitoring and multi-person tracking verification
+  if (result.workers?.length > 0) {
+    const workerSummaries = result.workers.map((w) => {
+      const postFinding = (w.findings || []).find((f) => f.type === 'UnsafePosture');
+      const findingStr = postFinding ? `UnsafePosture(+${postFinding.points}pt)` : 'compliant';
+      const hasSkeleton = Boolean(w.rawNormLandmarks && w.rawNormLandmarks.length > 0);
+      return `Worker#${w.trackId}[${w.severity}, score=${w.riskScore}, posture=${w.posture?.postureState ?? 'NORMAL'}, skeleton=${hasSkeleton ? 'active' : 'none'}, ${findingStr}]`;
+    }).join(' | ');
+    console.log(`[App] Frame ${result.frameId}: activeWorkers=${result.workers.length} -> ${workerSummaries}`);
+  }
+
   return result;
 }
 
-// Executes periodic real-time camera inference loop throttled to avoid UI lag.
+// Executes periodic real-time camera or video inference loop throttled to avoid UI lag.
 async function runCameraLoop(timestamp) {
-  if (!mediaStream) return;
+  const isVideoActive = currentMode === 'video' && webcamVideo.src && !webcamVideo.paused && !webcamVideo.ended;
+  if (!mediaStream && !isVideoActive) return;
 
-  if (timestamp - lastInferenceTime >= INFERENCE_INTERVAL_MS) {
+  const elapsed = timestamp - lastInferenceTime;
+  if (elapsed >= INFERENCE_INTERVAL_MS) {
+    const fps = lastInferenceTime > 0 ? Math.round(1000 / Math.max(1, elapsed)) : 0;
     lastInferenceTime = timestamp;
     const frameStartTime = performance.now();
 
@@ -485,7 +550,6 @@ async function runCameraLoop(timestamp) {
     }
 
     const latency = Math.round(performance.now() - frameStartTime);
-    const fps = Math.round(1000 / Math.max(1, timestamp - lastInferenceTime));
     fpsTelemetry.textContent = `FPS: ${fps} | Latency: ${latency}ms | Model: Pose Lite`;
   }
 
@@ -532,27 +596,72 @@ async function startWebcam() {
 
 // Stops active webcam media stream tracks, cancels animation loop, and resets UI.
 function stopWebcam() {
-  if (animationFrameId) {
-    cancelAnimationFrame(animationFrameId);
-    animationFrameId = null;
-  }
-
   if (mediaStream) {
     mediaStream.getTracks().forEach((track) => track.stop());
     mediaStream = null;
   }
 
-  webcamVideo.srcObject = null;
-  cameraStandbyOverlay.classList.remove('d-none');
-  btnStartCamera.disabled = false;
-  btnStopCamera.disabled = true;
-  cameraStatusMsg.textContent = 'Camera stopped.';
-  pipelineStatusMsg.textContent = 'MONITORING STOPPED';
-  pipelineStatusMsg.className = 'badge bg-secondary text-light';
-  fpsTelemetry.textContent = 'FPS: 0 | Latency: 0ms';
+  if (currentMode === 'camera') {
+    if (animationFrameId) {
+      cancelAnimationFrame(animationFrameId);
+      animationFrameId = null;
+    }
+    webcamVideo.srcObject = null;
+    cameraStandbyOverlay.classList.remove('d-none');
+    btnStartCamera.disabled = false;
+    btnStopCamera.disabled = true;
+    cameraStatusMsg.textContent = 'Camera stopped.';
+    pipelineStatusMsg.textContent = 'MONITORING STOPPED';
+    pipelineStatusMsg.className = 'badge bg-secondary text-light';
+    fpsTelemetry.textContent = 'FPS: 0 | Latency: 0ms';
 
-  // Render cleared canvas
-  renderCanvas(null, [], false);
+    // Render cleared canvas
+    renderCanvas(null, [], false);
+  }
+}
+
+// Starts local video playback and runs continuous frame inference loop.
+async function startVideoPlayback() {
+  if (!webcamVideo.src) return;
+  try {
+    webcamVideo.loop = videoLoopToggle.checked;
+    await webcamVideo.play();
+
+    visualizerCanvas.width = webcamVideo.videoWidth || 640;
+    visualizerCanvas.height = webcamVideo.videoHeight || 480;
+
+    cameraStandbyOverlay.classList.add('d-none');
+    btnPlayVideo.disabled = true;
+    btnPauseVideo.disabled = false;
+    btnRestartVideo.disabled = false;
+    videoStatusMsg.textContent = 'Processing demo video locally with AI...';
+    pipelineStatusMsg.textContent = 'MONITORING ACTIVE';
+    pipelineStatusMsg.className = 'badge bg-success text-light';
+
+    if (!animationFrameId) {
+      lastInferenceTime = performance.now();
+      animationFrameId = requestAnimationFrame(runCameraLoop);
+    }
+  } catch (err) {
+    console.error('Video playback error:', err);
+    videoStatusMsg.textContent = `Playback error: ${err.message}`;
+  }
+}
+
+// Pauses video playback and pauses frame inference loop.
+function pauseVideoPlayback() {
+  webcamVideo.pause();
+  btnPlayVideo.disabled = false;
+  btnPauseVideo.disabled = true;
+  videoStatusMsg.textContent = 'Video paused.';
+  pipelineStatusMsg.textContent = 'MONITORING PAUSED';
+  pipelineStatusMsg.className = 'badge bg-warning text-dark';
+}
+
+// Rewinds video to beginning and resumes inference playback.
+function restartVideoPlayback() {
+  webcamVideo.currentTime = 0;
+  startVideoPlayback();
 }
 
 // Fetches the active test scenario fixture and injects prepared sequence into engine.
@@ -590,20 +699,50 @@ function pauseStreamSimulation() {
   btnPauseStream.disabled = true;
 }
 
-// Switches UI between Live Camera mode and Simulation/Fixtures mode.
+// Switches UI between Live Camera, Video File Upload, and Simulation/Fixtures mode.
 function setStreamMode(mode) {
   currentMode = mode;
   pauseStreamSimulation();
 
   if (mode === 'camera') {
+    if (webcamVideo.src && !mediaStream) {
+      webcamVideo.pause();
+    }
     cameraControls.classList.remove('d-none');
+    videoUploadControls.classList.add('d-none');
     testHarnessControls.classList.add('d-none');
     streamWatermark.textContent = 'LIVE WEBCAM AI';
     streamWatermark.className = 'position-absolute top-0 start-0 m-2 badge bg-primary bg-opacity-75 text-white fw-bold';
-    renderCanvas(webcamVideo, lastWorkerPayload, true);
-  } else {
+    if (!mediaStream) {
+      cameraStandbyOverlay.classList.remove('d-none');
+      renderCanvas(null, [], false);
+    } else {
+      cameraStandbyOverlay.classList.add('d-none');
+      renderCanvas(webcamVideo, lastWorkerPayload, true);
+    }
+  } else if (mode === 'video') {
     stopWebcam();
     cameraControls.classList.add('d-none');
+    videoUploadControls.classList.remove('d-none');
+    testHarnessControls.classList.add('d-none');
+    streamWatermark.textContent = 'VIDEO DEMO AI';
+    streamWatermark.className = 'position-absolute top-0 start-0 m-2 badge bg-warning text-dark fw-bold';
+    if (!webcamVideo.src) {
+      cameraStandbyOverlay.classList.remove('d-none');
+      renderCanvas(null, [], false);
+    } else {
+      cameraStandbyOverlay.classList.add('d-none');
+      if (!webcamVideo.paused) {
+        startVideoPlayback();
+      }
+    }
+  } else {
+    stopWebcam();
+    if (webcamVideo.src) {
+      webcamVideo.pause();
+    }
+    cameraControls.classList.add('d-none');
+    videoUploadControls.classList.add('d-none');
     testHarnessControls.classList.remove('d-none');
     cameraStandbyOverlay.classList.add('d-none');
     streamWatermark.textContent = 'SIMULATION / FIXTURE DATA (Not live inference)';
@@ -641,7 +780,52 @@ async function populateHistoryModal() {
 function setupEventListeners() {
   // Mode selection
   document.getElementById('modeCamera').addEventListener('change', () => setStreamMode('camera'));
+  document.getElementById('modeVideo').addEventListener('change', () => setStreamMode('video'));
   document.getElementById('modeTest').addEventListener('change', () => setStreamMode('test'));
+
+  // Video File Upload controls
+  videoFileInput.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (mediaStream) stopWebcam();
+    pauseStreamSimulation();
+
+    const url = URL.createObjectURL(file);
+    webcamVideo.srcObject = null;
+    webcamVideo.src = url;
+    webcamVideo.loop = videoLoopToggle.checked;
+
+    webcamVideo.onloadedmetadata = () => {
+      visualizerCanvas.width = webcamVideo.videoWidth || 640;
+      visualizerCanvas.height = webcamVideo.videoHeight || 480;
+    };
+
+    videoStatusMsg.textContent = `Loaded "${file.name}" (${(file.size / (1024 * 1024)).toFixed(2)} MB). Starting detection...`;
+    btnPlayVideo.disabled = false;
+    btnPauseVideo.disabled = true;
+    btnRestartVideo.disabled = false;
+
+    startVideoPlayback();
+  });
+
+  btnPlayVideo.addEventListener('click', startVideoPlayback);
+  btnPauseVideo.addEventListener('click', pauseVideoPlayback);
+  btnRestartVideo.addEventListener('click', restartVideoPlayback);
+
+  videoLoopToggle.addEventListener('change', () => {
+    webcamVideo.loop = videoLoopToggle.checked;
+  });
+
+  webcamVideo.addEventListener('ended', () => {
+    if (!webcamVideo.loop) {
+      btnPlayVideo.disabled = false;
+      btnPauseVideo.disabled = true;
+      videoStatusMsg.textContent = 'Video playback ended. Click "Restart" to replay.';
+      pipelineStatusMsg.textContent = 'MONITORING IDLE';
+      pipelineStatusMsg.className = 'badge bg-secondary text-light';
+    }
+  });
 
   // Camera controls
   btnStartCamera.addEventListener('click', startWebcam);
@@ -734,7 +918,8 @@ async function init() {
   // 2. Register Service Worker for offline operation
   if ('serviceWorker' in navigator) {
     try {
-      await navigator.serviceWorker.register('./sw.js');
+      const swReg = await navigator.serviceWorker.register('./sw.js');
+      if (swReg) swReg.update();
       badgeOfflineState.className = 'badge bg-success-subtle text-success border border-success';
       badgeOfflineState.textContent = 'Offline: Ready';
     } catch (swErr) {
@@ -759,5 +944,13 @@ if (document.readyState === 'loading') {
 
 // Expose pipeline and engine on window for telemetry inspection and testing
 if (typeof window !== 'undefined') {
-  window.__ergoguard = { pipeline, engine, storage };
+  window.__ergoguard = {
+    pipeline,
+    engine,
+    storage,
+    processFrameInput,
+    renderCanvas,
+    visualizerCanvas,
+    getDiagnostics: () => [...devDiagnosticsBuffer],
+  };
 }

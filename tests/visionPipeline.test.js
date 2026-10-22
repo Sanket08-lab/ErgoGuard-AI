@@ -131,4 +131,136 @@ test('vision pipeline frame with unsafe stoop: flags posture violation from land
   assert.equal(result.overallRisk.severity, 'MEDIUM');
 });
 
+test('calculatePersonBoundingBox: successfully detects seated/waist-up webcam user with occluded hips', () => {
+  const pipeline = new VisionPipeline();
+  // Seated webcam view: nose (0), ears (7,8), shoulders (11,12) clearly visible; hips/legs below frame (< 0.20)
+  const webcamLandmarks = Array(33).fill(null).map(() => ({ x: 0.5, y: 0.5, visibility: 0.1 }));
+  webcamLandmarks[0] = { x: 0.50, y: 0.20, visibility: 0.95 }; // nose
+  webcamLandmarks[7] = { x: 0.45, y: 0.22, visibility: 0.90 }; // left ear
+  webcamLandmarks[8] = { x: 0.55, y: 0.22, visibility: 0.90 }; // right ear
+  webcamLandmarks[11] = { x: 0.40, y: 0.35, visibility: 0.95 }; // left shoulder
+  webcamLandmarks[12] = { x: 0.60, y: 0.35, visibility: 0.95 }; // right shoulder
+  webcamLandmarks[13] = { x: 0.35, y: 0.50, visibility: 0.85 }; // left elbow
+  webcamLandmarks[14] = { x: 0.65, y: 0.50, visibility: 0.85 }; // right elbow
+  webcamLandmarks[23] = { x: 0.42, y: 0.90, visibility: 0.10 }; // hip occluded by desk
+  webcamLandmarks[24] = { x: 0.58, y: 0.90, visibility: 0.10 }; // hip occluded by desk
+
+  const bbox = pipeline.calculatePersonBoundingBox(webcamLandmarks, 640, 480);
+  assert.ok(bbox, 'Live webcam user with occluded hips must be detected');
+  assert.ok(bbox.width > 100, 'Bounding box width must span shoulders');
+  assert.ok(bbox.height > 100, 'Bounding box height must span head to torso');
+  assert.ok(bbox.confidence >= 0.70, 'Confidence must reflect visible upper body');
+});
+
+test('calculatePersonBoundingBox: rejects non-human metal frame/wheelbarrow lacking head/torso structure', () => {
+  const pipeline = new VisionPipeline();
+  // Horizontal metal wheelbarrow frame with scattered spurious keypoints, zero head presence
+  const wheelbarrowLandmarks = Array(33).fill(null).map(() => ({ x: 0.5, y: 0.5, visibility: 0.05 }));
+  wheelbarrowLandmarks[13] = { x: 0.20, y: 0.80, visibility: 0.40 }; // random points on wheel/tray
+  wheelbarrowLandmarks[14] = { x: 0.50, y: 0.82, visibility: 0.40 };
+  wheelbarrowLandmarks[15] = { x: 0.70, y: 0.81, visibility: 0.40 };
+  wheelbarrowLandmarks[16] = { x: 0.85, y: 0.79, visibility: 0.40 };
+
+  const bbox = pipeline.calculatePersonBoundingBox(wheelbarrowLandmarks, 640, 480);
+  assert.strictEqual(bbox, null, 'Non-human equipment lacking upper body/torso must be rejected');
+});
+
+test('calculatePersonBoundingBox: returns null on empty frame or zero landmarks', () => {
+  const pipeline = new VisionPipeline();
+  assert.strictEqual(pipeline.calculatePersonBoundingBox(null, 640, 480), null);
+  assert.strictEqual(pipeline.calculatePersonBoundingBox([], 640, 480), null);
+});
+
+test('multi-person detection: pose detector defaults numPoses to 4 for concurrent tracking', () => {
+  const pipeline = new VisionPipeline();
+  assert.equal(pipeline.poseDetector.numPoses, 4, 'Pose detector must default to numPoses=4');
+
+  const customPipeline = new VisionPipeline({ pose: { numPoses: 6 } });
+  assert.equal(customPipeline.poseDetector.numPoses, 6, 'Custom numPoses option must be respected');
+});
+
+test('multi-person detection: processes 3 simultaneous visible workers into 3 independent skeletons', async () => {
+  const pipeline = new VisionPipeline();
+  const engine = new RiskEngine({ onsetDebounceMs: 0 });
+
+  // Generate 3 distinct worker pose landmark sets spread across the camera view
+  function makeMockWorkerLandmarks(centerX, centerY) {
+    const landmarks = Array(33).fill(null).map(() => ({ x: centerX, y: centerY, z: 0, visibility: 0.1 }));
+    landmarks[0] = { x: centerX, y: centerY - 0.20, z: 0, visibility: 0.95 }; // nose
+    landmarks[7] = { x: centerX - 0.05, y: centerY - 0.18, z: 0, visibility: 0.90 }; // left ear
+    landmarks[8] = { x: centerX + 0.05, y: centerY - 0.18, z: 0, visibility: 0.90 }; // right ear
+    landmarks[11] = { x: centerX - 0.08, y: centerY - 0.05, z: 0, visibility: 0.92 }; // left shoulder
+    landmarks[12] = { x: centerX + 0.08, y: centerY - 0.05, z: 0, visibility: 0.92 }; // right shoulder
+    landmarks[23] = { x: centerX - 0.06, y: centerY + 0.15, z: 0, visibility: 0.88 }; // left hip
+    landmarks[24] = { x: centerX + 0.06, y: centerY + 0.15, z: 0, visibility: 0.88 }; // right hip
+    landmarks[25] = { x: centerX - 0.06, y: centerY + 0.30, z: 0, visibility: 0.85 }; // left knee
+    landmarks[26] = { x: centerX + 0.06, y: centerY + 0.30, z: 0, visibility: 0.85 }; // right knee
+    landmarks[27] = { x: centerX - 0.06, y: centerY + 0.45, z: 0, visibility: 0.80 }; // left ankle
+    landmarks[28] = { x: centerX + 0.06, y: centerY + 0.45, z: 0, visibility: 0.80 }; // right ankle
+    return landmarks;
+  }
+
+  // 3 people: Left worker (x=0.2), Middle worker (x=0.5), Right worker (x=0.8)
+  const worker1Landmarks = makeMockWorkerLandmarks(0.20, 0.45);
+  const worker2Landmarks = makeMockWorkerLandmarks(0.50, 0.45);
+  const worker3Landmarks = makeMockWorkerLandmarks(0.80, 0.45);
+
+  // Mock pose detector detectForVideo output with 3 simultaneous detected poses
+  pipeline.poseDetector.state = 'READY';
+  pipeline.poseDetector.detectForVideo = () => ({
+    poses: [
+      { poseIndex: 0, landmarks: worker1Landmarks },
+      { poseIndex: 1, landmarks: worker2Landmarks },
+      { poseIndex: 2, landmarks: worker3Landmarks },
+    ],
+    timestampMs: Date.now(),
+    state: 'READY',
+  });
+
+  const mockVideo = { readyState: 4, videoWidth: 640, videoHeight: 480, currentTime: 1.0 };
+  const payload = await pipeline.processVideoFrame(mockVideo);
+
+  assert.ok(payload, 'Pipeline must successfully return frame payload');
+  assert.equal(payload.rawPoseCount, 3, 'Must report 3 raw poses returned by model');
+  assert.equal(payload.workers.length, 3, 'Must retain all 3 workers after filtering');
+
+  // Verify each worker has distinct trackId, valid bbox, pixel landmarks, and rawNormLandmarks for skeleton drawing
+  const [w1, w2, w3] = payload.workers;
+  assert.equal(w1.track_id, 1);
+  assert.equal(w2.track_id, 2);
+  assert.equal(w3.track_id, 3);
+
+  assert.ok(w1.bbox.x2 < w2.bbox.x1, 'Worker 1 bbox must be to the left of Worker 2');
+  assert.ok(w2.bbox.x2 < w3.bbox.x1, 'Worker 2 bbox must be to the left of Worker 3');
+
+  assert.ok(w1.rawNormLandmarks && w1.rawNormLandmarks.length === 33, 'Worker 1 raw skeleton landmarks preserved');
+  assert.ok(w2.rawNormLandmarks && w2.rawNormLandmarks.length === 33, 'Worker 2 raw skeleton landmarks preserved');
+  assert.ok(w3.rawNormLandmarks && w3.rawNormLandmarks.length === 33, 'Worker 3 raw skeleton landmarks preserved');
+
+  // Evaluate frame payload in RiskEngine to verify multi-worker safety evaluation
+  const engineResult = engine.processFrame(payload);
+  assert.ok(engineResult, 'Engine must process 3-worker payload');
+  assert.equal(engineResult.workers.length, 3, 'Engine must evaluate exactly 3 workers');
+  assert.equal(engineResult.workers[0].trackId, 1);
+  assert.equal(engineResult.workers[1].trackId, 2);
+  assert.equal(engineResult.workers[2].trackId, 3);
+});
+
+test('calculatePersonBoundingBox: retains distant worker with average visibility between 0.35 and 0.49', () => {
+  const pipeline = new VisionPipeline();
+  // Distant worker with lower visibility (0.42 average)
+  const distantWorker = Array(33).fill(null).map(() => ({ x: 0.5, y: 0.5, visibility: 0.1 }));
+  distantWorker[0] = { x: 0.50, y: 0.20, visibility: 0.45 }; // nose
+  distantWorker[7] = { x: 0.45, y: 0.22, visibility: 0.42 }; // ear
+  distantWorker[8] = { x: 0.55, y: 0.22, visibility: 0.42 }; // ear
+  distantWorker[11] = { x: 0.42, y: 0.35, visibility: 0.45 }; // shoulder
+  distantWorker[12] = { x: 0.58, y: 0.35, visibility: 0.45 }; // shoulder
+  distantWorker[23] = { x: 0.44, y: 0.65, visibility: 0.40 }; // hip
+  distantWorker[24] = { x: 0.56, y: 0.65, visibility: 0.40 }; // hip
+
+  const bbox = pipeline.calculatePersonBoundingBox(distantWorker, 640, 480);
+  assert.ok(bbox, 'Distant worker with average visibility >= 0.35 must have bounding box');
+  assert.ok(bbox.confidence >= 0.35 && bbox.confidence < 0.50, 'Confidence is between 0.35 and 0.50');
+});
+
 console.log(`\nAll ${testsRun} vision pipeline tests passed successfully!\n`);

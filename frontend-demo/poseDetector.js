@@ -6,6 +6,12 @@ export class LocalPoseDetector {
     // Configures local asset paths relative to frontend-demo
     this.wasmPath = options.wasmPath ?? './vendor/tasks-vision/wasm';
     this.modelPath = options.modelPath ?? './models/pose_landmarker_lite.task';
+    this.numPoses = options.numPoses ?? options.maxPoses ?? 4;
+    this.runningMode = options.runningMode ?? 'VIDEO';
+    // Calibrated to 0.25 to prevent dropping secondary or angled persons in multi-person webcam feeds
+    this.minPoseDetectionConfidence = options.minPoseDetectionConfidence ?? 0.25;
+    this.minPosePresenceConfidence = options.minPosePresenceConfidence ?? 0.25;
+    this.minTrackingConfidence = options.minTrackingConfidence ?? 0.25;
     this.state = 'UNINITIALIZED'; // 'UNINITIALIZED' | 'LOADING' | 'READY' | 'ERROR'
     this.errorMessage = null;
     this.landmarker = null;
@@ -29,11 +35,11 @@ export class LocalPoseDetector {
             modelAssetPath: this.modelPath,
             delegate: 'GPU',
           },
-          runningMode: 'VIDEO',
-          numPoses: 2,
-          minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
+          runningMode: this.runningMode,
+          numPoses: this.numPoses,
+          minPoseDetectionConfidence: this.minPoseDetectionConfidence,
+          minPosePresenceConfidence: this.minPosePresenceConfidence,
+          minTrackingConfidence: this.minTrackingConfidence,
         });
       } catch (gpuErr) {
         console.warn('[PoseDetector] GPU delegate failed, falling back to CPU delegate:', gpuErr);
@@ -42,11 +48,11 @@ export class LocalPoseDetector {
             modelAssetPath: this.modelPath,
             delegate: 'CPU',
           },
-          runningMode: 'VIDEO',
-          numPoses: 2,
-          minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
+          runningMode: this.runningMode,
+          numPoses: this.numPoses,
+          minPoseDetectionConfidence: this.minPoseDetectionConfidence,
+          minPosePresenceConfidence: this.minPosePresenceConfidence,
+          minTrackingConfidence: this.minTrackingConfidence,
         });
       }
 
@@ -75,8 +81,22 @@ export class LocalPoseDetector {
     this.lastInferenceTimeMs = now;
 
     try {
-      const results = this.landmarker.detectForVideo(videoElement, now);
+      const results = this.runningMode === 'IMAGE'
+        ? this.landmarker.detect(videoElement)
+        : this.landmarker.detectForVideo(videoElement, now);
       const rawLandmarksList = results?.landmarks ?? [];
+
+      // Multi-person diagnostic telemetry per task 5
+      const vw = videoElement.videoWidth || 0;
+      const vh = videoElement.videoHeight || 0;
+      const poseDetails = rawLandmarksList.map((lms, idx) => {
+        const nose = lms[0];
+        const avgVis = lms.reduce((acc, p) => acc + (p.visibility ?? 1.0), 0) / lms.length;
+        const noseStr = nose ? `nose=[${Math.round(nose.x * vw)},${Math.round(nose.y * vh)},vis=${(nose.visibility ?? 1.0).toFixed(2)}]` : 'nose=N/A';
+        return `Pose#${idx + 1}(${noseStr}, avgVis=${avgVis.toFixed(2)})`;
+      }).join('; ');
+
+      console.log(`[PoseDetector] Frame @${Math.round(now)}ms: dims=${vw}x${vh}, model=${this.modelPath}, runningMode=${this.runningMode}, conf=[det=${this.minPoseDetectionConfidence},pres=${this.minPosePresenceConfidence},track=${this.minTrackingConfidence}], numPoses=${this.numPoses}, poses returned=${rawLandmarksList.length}${rawLandmarksList.length > 0 ? ` -> ${poseDetails}` : ''}`);
 
       // Maps detected poses into standardized landmark arrays
       const poses = rawLandmarksList.map((landmarks, poseIdx) => {

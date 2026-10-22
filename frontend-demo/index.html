@@ -136,6 +136,9 @@
               <input type="radio" class="btn-check" name="streamMode" id="modeCamera" autocomplete="off" checked>
               <label class="btn btn-outline-primary" for="modeCamera">Live Camera (AI)</label>
 
+              <input type="radio" class="btn-check" name="streamMode" id="modeVideo" autocomplete="off">
+              <label class="btn btn-outline-warning" for="modeVideo">Upload Video File</label>
+
               <input type="radio" class="btn-check" name="streamMode" id="modeTest" autocomplete="off">
               <label class="btn btn-outline-info" for="modeTest">Simulation / Fixtures</label>
             </div>
@@ -191,6 +194,28 @@
                   <input type="file" id="customOnnxFileInput" accept=".onnx" class="form-control form-control-sm bg-slate-800 text-light border-secondary">
                   <div id="onnxLoadFeedback" class="small mt-1 text-muted">Current status: PPE MODEL NOT AVAILABLE (Evaluating posture & falls independently).</div>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Video File Upload Controls -->
+          <div id="videoUploadControls" class="card-footer bg-slate-900 border-secondary py-2 d-none">
+            <div class="row g-2 align-items-center">
+              <div class="col-12 col-md-7">
+                <label for="videoFileInput" class="form-label small text-secondary mb-1">Upload Demo Video (.mp4, .webm, .mov):</label>
+                <input type="file" id="videoFileInput" accept="video/mp4,video/webm,video/ogg,video/quicktime,video/*" class="form-control form-control-sm bg-slate-800 text-light border-secondary">
+              </div>
+              <div class="col-12 col-md-5 d-flex flex-wrap gap-2 justify-content-md-end mt-2 mt-md-4">
+                <button id="btnPlayVideo" class="btn btn-success btn-sm" disabled>▶ Play</button>
+                <button id="btnPauseVideo" class="btn btn-warning btn-sm" disabled>⏸ Pause</button>
+                <button id="btnRestartVideo" class="btn btn-outline-secondary btn-sm" disabled>↺ Restart</button>
+              </div>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-2 small">
+              <span id="videoStatusMsg" class="text-muted">Select an .mp4/.webm video to run local AI pose & risk analysis.</span>
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" id="videoLoopToggle" checked>
+                <label class="form-check-label text-secondary small" for="videoLoopToggle">Loop video</label>
               </div>
             </div>
           </div>

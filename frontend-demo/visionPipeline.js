@@ -60,12 +60,36 @@ export class VisionPipeline {
       }
     }
 
-    if (visibleCount < 4 || !Number.isFinite(minX) || !Number.isFinite(maxX)) {
+    const avgConf = visibleCount > 0 ? sumConf / visibleCount : 0;
+    const boxWidth = maxX - minX;
+    const boxHeight = maxY - minY;
+
+    // Require minimum visible landmark count
+    if (visibleCount < 4 || !Number.isFinite(minX) || !Number.isFinite(maxX) || avgConf < 0.35 || Math.max(boxWidth, boxHeight) < 40) {
       return null;
     }
 
-    const boxWidth = maxX - minX;
-    const boxHeight = maxY - minY;
+    // Anatomical verification: a genuine person must have an identifiable upper body or torso.
+    // Supports waist-up / desk webcam crops where hips/legs are outside the frame, while rejecting non-human clutter.
+    if (landmarks.length >= 25) {
+      const nose = landmarks[0];
+      const le = landmarks[7];
+      const re = landmarks[8];
+      const ls = landmarks[11];
+      const rs = landmarks[12];
+      const lh = landmarks[23];
+      const rh = landmarks[24];
+
+      const hasHead = (nose?.visibility ?? 0) >= 0.30 || (le?.visibility ?? 0) >= 0.30 || (re?.visibility ?? 0) >= 0.30;
+      const hasShoulder = (ls?.visibility ?? 0) >= 0.30 || (rs?.visibility ?? 0) >= 0.30;
+      const hasHip = (lh?.visibility ?? 0) >= 0.30 || (rh?.visibility ?? 0) >= 0.30;
+
+      // Must have upper body presence (head + shoulder) OR torso presence (shoulder + hip)
+      const isPlausibleHuman = (hasShoulder && (hasHead || hasHip)) || (hasHead && visibleCount >= 5);
+      if (!isPlausibleHuman) {
+        return null;
+      }
+    }
 
     // Anatomical margin: 15% horizontal buffer, 15% top buffer (head/helmet), 10% bottom buffer (feet)
     const padX = Math.max(16, boxWidth * 0.15);
@@ -94,15 +118,24 @@ export class VisionPipeline {
     if (this.isInferring) return null; // Prevent overlapping inferences to maintain responsiveness
 
     this.isInferring = true;
-    const now = Date.now();
+
+    // Live webcam streams (using mediaStream srcObject) use real-time monotonic epoch ms.
+    // Uploaded video playback uses video media time (videoElement.currentTime * 1000).
+    const isLiveCamera = Boolean(videoElement.srcObject);
+    let now = Date.now();
+    if (!isLiveCamera && typeof videoElement.currentTime === 'number' && videoElement.currentTime > 0) {
+      now = Math.round(videoElement.currentTime * 1000);
+    }
     const frameId = this.frameCounter++;
     const width = videoElement.videoWidth || 640;
     const height = videoElement.videoHeight || 480;
 
     try {
-      // 1. Run local MediaPipe Pose estimation
-      const poseResult = this.poseDetector.detectForVideo(videoElement, performance.now());
+      // 1. Run local MediaPipe Pose estimation with pre-inference diagnostic telemetry
+      const preInferenceTime = performance.now();
+      const poseResult = this.poseDetector.detectForVideo(videoElement, preInferenceTime);
       const detectedPoses = poseResult.poses || [];
+      const rawPosesReturned = detectedPoses.length;
 
       // 2. Run local YOLOv8 ONNX PPE detection if model is available
       let ppeResult = { state: this.ppeDetector.state, items: [] };
@@ -115,6 +148,11 @@ export class VisionPipeline {
         const trackId = idx + 1;
         const rawLandmarks = pose.landmarks;
 
+        const bbox = this.calculatePersonBoundingBox(rawLandmarks, width, height);
+        if (!bbox || bbox.confidence < 0.35) {
+          return null; // Reject detections with insufficient evidence of a valid human pose
+        }
+
         // Convert normalized landmarks to pixel coordinates expected by engine geometry calculations
         const pixelLandmarks = rawLandmarks.map((lm) => ({
           x: Math.round(lm.x * width * 10) / 10,
@@ -122,8 +160,6 @@ export class VisionPipeline {
           z: Math.round(lm.z * width * 10) / 10,
           visibility: lm.visibility,
         }));
-
-        const bbox = this.calculatePersonBoundingBox(rawLandmarks, width, height);
 
         // When PPE model is unavailable, provide uncertain sentinel values to prevent false violation or compliance
         let ppe = null;
@@ -149,12 +185,17 @@ export class VisionPipeline {
 
         return {
           track_id: trackId,
-          bbox: bbox || { x1: 0, y1: 0, x2: width, y2: height, confidence: 0.5 },
+          bbox,
           ppe,
           landmarks: pixelLandmarks,
           rawNormLandmarks: rawLandmarks, // Preserved for skeleton canvas rendering
         };
-      });
+      }).filter(Boolean);
+
+      // Diagnostic logging: reports raw count, filtered count, and engine delivery count
+      if (rawPosesReturned > 0 || workers.length > 0) {
+        console.log(`[VisionPipeline] Frame ${frameId}: rawPoses=${rawPosesReturned}, workersAfterFilter=${workers.length}, passedToEngine=${workers.length}`);
+      }
 
       return {
         frame_id: frameId,

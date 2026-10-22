@@ -300,6 +300,62 @@ test('REGRESSION 2: Both arms extended horizontally (T-pose) with collapsed box 
   assert.strictEqual(halfRes.findings.length, 0);
 });
 
+test('REGRESSION 2B: Waist-up crop with asymmetrical hip visibility (one hip occluded) during T-pose stays COMPLIANT', () => {
+  // Bounding box collapsed by horizontal arm span (H=140, W=560, AR=0.25 <= 0.85)
+  // Both shoulders visible at y=160 (center=320)
+  // Left hip visible at y=200 (x=250), right hip occluded by frame edge (vis=0.20 < 0.40)
+  // Legs outside frame (knees at bottom with weak vis=0.30)
+  const box = { x1: 40, y1: 100, x2: 600, y2: 240, confidence: 0.95 };
+  const lms = Array(33).fill(null).map(() => ({ x: 320, y: 300, visibility: 0.1 }));
+  lms[11] = { x: 250, y: 160, visibility: 0.95 }; // left shoulder
+  lms[12] = { x: 390, y: 160, visibility: 0.95 }; // right shoulder
+  lms[15] = { x: 50, y: 160, visibility: 0.95 };  // left wrist
+  lms[16] = { x: 590, y: 160, visibility: 0.95 }; // right wrist
+  lms[23] = { x: 250, y: 200, visibility: 0.95 }; // left hip visible
+  lms[24] = { x: 390, y: 200, visibility: 0.20 }; // right hip occluded!
+  lms[25] = { x: 250, y: 230, visibility: 0.30 }; // knees at bottom
+  lms[26] = { x: 390, y: 230, visibility: 0.30 };
+  lms[27] = { x: 250, y: 400, visibility: 0.05 }; // ankles out of frame
+  lms[28] = { x: 390, y: 400, visibility: 0.05 };
+
+  let trackState = {};
+  const s1 = fallRule(box, lms, trackState, { timestamp: 0 });
+  trackState = s1.updatedTrackState;
+
+  // Persisting in T-pose for 500ms (> 333ms confirmation window) must remain COMPLIANT
+  const s2 = fallRule(box, lms, trackState, { timestamp: 500 });
+  assert.strictEqual(s2.status, 'COMPLIANT');
+  assert.strictEqual(s2.fallState, 'NORMAL');
+  assert.strictEqual(s2.isFallen, false);
+  assert.strictEqual(s2.findings.length, 0);
+  assert.ok(s2.torsoFloorAngleDeg >= 75.0, `Expected torsoFloorAngleDeg >= 75.0, got ${s2.torsoFloorAngleDeg}`);
+});
+
+test('REGRESSION 2C: Waist-up crop with normalized coordinates [0, 1] during T-pose stays COMPLIANT', () => {
+  const normBox = { x1: 0, y1: 50, x2: 640, y2: 300, confidence: 0.95 }; // AR=0.39 <= 0.85
+  const normLms = Array(33).fill(null).map(() => ({ x: 0.5, y: 0.5, z: 0, visibility: 0.05 }));
+  normLms[11] = { x: 0.40, y: 0.25, visibility: 0.95 };
+  normLms[12] = { x: 0.60, y: 0.25, visibility: 0.95 };
+  normLms[15] = { x: 0.08, y: 0.25, visibility: 0.95 };
+  normLms[16] = { x: 0.92, y: 0.25, visibility: 0.95 };
+  normLms[23] = { x: 0.44, y: 0.70, visibility: 0.85 };
+  normLms[24] = { x: 0.56, y: 0.70, visibility: 0.85 };
+  normLms[25] = { x: 0.44, y: 1.15, visibility: 0.05 }; // legs outside frame
+  normLms[26] = { x: 0.56, y: 1.15, visibility: 0.05 };
+  normLms[27] = { x: 0.44, y: 1.35, visibility: 0.02 };
+  normLms[28] = { x: 0.56, y: 1.35, visibility: 0.02 };
+
+  let trackState = {};
+  const s1 = fallRule(normBox, normLms, trackState, { timestamp: 0 });
+  trackState = s1.updatedTrackState;
+
+  const s2 = fallRule(normBox, normLms, trackState, { timestamp: 500 });
+  assert.strictEqual(s2.status, 'COMPLIANT');
+  assert.strictEqual(s2.fallState, 'NORMAL');
+  assert.strictEqual(s2.isFallen, false);
+  assert.strictEqual(s2.findings.length, 0);
+});
+
 test('REGRESSION 3: Both arms raised overhead produces tall aspect ratio and stays COMPLIANT', () => {
   const upBox = { x1: 250, y1: 30, x2: 390, y2: 510, confidence: 0.95 }; // H=480, W=140 (AR=3.43)
   const upLms = Array(33).fill(null).map(() => ({ x: 320, y: 300, visibility: 0.1 }));

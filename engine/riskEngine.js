@@ -201,13 +201,23 @@ export class RiskEngine extends EventTarget {
 
       // 2. Evaluate Ergonomic Posture & Fatigue
       const prevPostureHist = this.workerPostureHistory.get(trackId) ?? {};
-      const postureRes = postureRule(w, landmarks, prevPostureHist, { timestamp: timestampMs });
+      const postureOptions = {
+        timestamp: timestampMs,
+        ...this.options.posture,
+        ...(this.options.briefBendGraceMs !== undefined ? { briefBendGraceMs: this.options.briefBendGraceMs } : {}),
+      };
+      const postureRes = postureRule(w, landmarks, prevPostureHist, postureOptions);
       this.workerPostureHistory.set(trackId, postureRes.updatedHistory ?? prevPostureHist);
       const postureFindings = postureRes.findings ?? [];
 
       // 3. Evaluate Fall Kinematics & Floor Inactivity
       const prevFallHist = this.workerFallHistory.get(trackId) ?? {};
-      const fallRes = fallRule(w, landmarks, prevFallHist, { timestamp: timestampMs });
+      const fallOptions = {
+        timestamp: timestampMs,
+        ...this.options.fall,
+        ...(this.options.fallConfirmationMs !== undefined ? { fallConfirmationMs: this.options.fallConfirmationMs } : {}),
+      };
+      const fallRes = fallRule(w, landmarks, prevFallHist, fallOptions);
       this.workerFallHistory.set(trackId, fallRes.updatedTrackState ?? prevFallHist);
       const fallFindings = fallRes.findings ?? [];
 
