@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Download, Search, Filter, ClipboardList, AlertTriangle, CheckCircle2, Clock3 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Download, Search, Filter, ClipboardList, AlertTriangle, CheckCircle2, Clock3, Trash2 } from 'lucide-react';
 import { api } from '../services/api';
 import SectionHeader from '../components/SectionHeader';
 import SeverityBadge from '../components/SeverityBadge';
@@ -27,31 +27,123 @@ export default function Incidents() {
     const link = document.createElement('a'); link.href = url; link.download = 'ergoguard-incidents.csv'; link.click(); URL.revokeObjectURL(url);
   }
 
+  const handleClearIncidentLog = () => {
+    const confirmed = window.confirm('Are you sure you want to clear the entire incident log? All currently recorded incident entries will be removed.');
+    if (confirmed) {
+      setItems([]);
+    }
+  };
+
   const openCount = items.filter(i => i.status === 'Open').length;
   const reviewCount = items.filter(i => i.status === 'Review').length;
   const resolvedCount = items.filter(i => i.status === 'Resolved').length;
 
-  return <div className="dashboard-stack">
-    <div className="incident-summary-grid">
-      <div className="mini-stat"><span className="mini-stat-icon red"><AlertTriangle size={18}/></span><div><small>Open incidents</small><strong>{openCount}</strong></div></div>
-      <div className="mini-stat"><span className="mini-stat-icon amber"><Clock3 size={18}/></span><div><small>Under review</small><strong>{reviewCount}</strong></div></div>
-      <div className="mini-stat"><span className="mini-stat-icon green"><CheckCircle2 size={18}/></span><div><small>Resolved</small><strong>{resolvedCount}</strong></div></div>
-      <div className="mini-stat"><span className="mini-stat-icon blue"><ClipboardList size={18}/></span><div><small>Total records</small><strong>{items.length}</strong></div></div>
+  return (
+    <div className="dashboard-stack">
+      <div className="incident-summary-grid">
+        <div className="mini-stat"><span className="mini-stat-icon red"><AlertTriangle size={18}/></span><div><small>Open incidents</small><strong>{openCount}</strong></div></div>
+        <div className="mini-stat"><span className="mini-stat-icon amber"><Clock3 size={18}/></span><div><small>Under review</small><strong>{reviewCount}</strong></div></div>
+        <div className="mini-stat"><span className="mini-stat-icon green"><CheckCircle2 size={18}/></span><div><small>Resolved</small><strong>{resolvedCount}</strong></div></div>
+        <div className="mini-stat"><span className="mini-stat-icon blue"><ClipboardList size={18}/></span><div><small>Total records</small><strong>{items.length}</strong></div></div>
+      </div>
+
+      <section className="panel incident-table-panel">
+        <SectionHeader 
+          title="Incident register" 
+          subtitle="Review and manage safety incidents detected across monitored plant zones." 
+          action={
+            <div className="incident-header-actions">
+              <button 
+                className="clear-data-btn" 
+                onClick={handleClearIncidentLog}
+                disabled={items.length === 0}
+                title="Clear entire incident log"
+              >
+                <Trash2 size={13} />
+                <span>Clear Incident Log</span>
+              </button>
+              <button 
+                className="button button-secondary" 
+                onClick={exportCsv}
+                disabled={filtered.length === 0}
+              >
+                <Download size={14} />
+                <span>Export CSV</span>
+              </button>
+            </div>
+          }
+        />
+
+        <div className="table-toolbar">
+          <label className="search-field">
+            <Search size={16}/>
+            <input 
+              value={query} 
+              onChange={e => setQuery(e.target.value)} 
+              placeholder="Search incidents, zones, workers..." 
+            />
+          </label>
+          <label className="select-field">
+            <Filter size={15}/>
+            <select value={severity} onChange={e => setSeverity(e.target.value)}>
+              <option>All severities</option>
+              <option>Critical</option>
+              <option>High</option>
+              <option>Medium</option>
+              <option>Low</option>
+            </select>
+          </label>
+          <label className="select-field">
+            <select value={status} onChange={e => setStatus(e.target.value)}>
+              <option>All statuses</option>
+              <option>Open</option>
+              <option>Review</option>
+              <option>Resolved</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="table-wrap">
+          <table className="data-table incidents-table">
+            <thead>
+              <tr>
+                <th>INCIDENT</th>
+                <th>LOCATION</th>
+                <th>WORKER REF.</th>
+                <th>TIME</th>
+                <th>SEVERITY</th>
+                <th>STATUS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(item => (
+                <tr key={item.id}>
+                  <td>
+                    <strong className="event-title">{item.type}</strong>
+                    <span className="event-id">{item.id}</span>
+                  </td>
+                  <td>{item.location}</td>
+                  <td>{item.worker}</td>
+                  <td className="time-cell">{item.time}</td>
+                  <td><SeverityBadge severity={item.severity}/></td>
+                  <td><span className={`status-text status-${item.status.toLowerCase()}`}>{item.status}</span></td>
+                </tr>
+              ))}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan="6" className="empty-state" style={{ textAlign: 'center', padding: '30px', color: '#64748B' }}>
+                    {items.length === 0 ? 'Incident log is empty. No incidents recorded.' : 'No incidents match these filters.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="table-bottom">
+          <span>Showing <strong>{filtered.length}</strong> of <strong>{items.length}</strong> records</span>
+          <span>ErgoGuard AI Incident Store</span>
+        </div>
+      </section>
     </div>
-    <section className="panel incident-table-panel">
-      <SectionHeader title="Incident register" subtitle="Review the incident records currently available in the selected data source." action={<button className="button button-secondary" onClick={exportCsv}><Download size={15}/> Export CSV</button>}/>
-      <div className="table-toolbar">
-        <label className="search-field"><Search size={16}/><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search incidents, zones, workers..." /></label>
-        <label className="select-field"><Filter size={15}/><select value={severity} onChange={e => setSeverity(e.target.value)}><option>All severities</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
-        <label className="select-field"><select value={status} onChange={e => setStatus(e.target.value)}><option>All statuses</option><option>Open</option><option>Review</option><option>Resolved</option></select></label>
-      </div>
-      <div className="table-wrap">
-        <table className="data-table incidents-table"><thead><tr><th>INCIDENT</th><th>LOCATION</th><th>WORKER REF.</th><th>TIME</th><th>SEVERITY</th><th>STATUS</th></tr></thead>
-          <tbody>{filtered.map(item => <tr key={item.id}><td><strong className="event-title">{item.type}</strong><span className="event-id">{item.id}</span></td><td>{item.location}</td><td>{item.worker}</td><td className="time-cell">{item.time}</td><td><SeverityBadge severity={item.severity}/></td><td><span className={`status-text status-${item.status.toLowerCase()}`}>{item.status}</span></td></tr>)}
-          {filtered.length === 0 && <tr><td colSpan="6" className="empty-state">No incidents match these filters.</td></tr>}</tbody>
-        </table>
-      </div>
-      <div className="table-bottom"><span>Showing <strong>{filtered.length}</strong> of <strong>{items.length}</strong> records</span><span>Sample incident data</span></div>
-    </section>
-  </div>;
+  );
 }

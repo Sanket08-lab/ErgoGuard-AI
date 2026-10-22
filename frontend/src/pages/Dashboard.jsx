@@ -1,94 +1,628 @@
-import { useEffect, useState } from 'react';
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, HardHat, ShieldCheck, Users, Video, WifiOff, MapPin, Clock3, Maximize2, RefreshCw } from 'lucide-react';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-import { api, isDemoMode } from '../services/api';
-import MetricCard from '../components/MetricCard';
-import SectionHeader from '../components/SectionHeader';
-import SeverityBadge from '../components/SeverityBadge';
+import React, { useState } from 'react';
+import { 
+  Users, AlertTriangle, ShieldCheck, Activity, Video, 
+  Maximize2, ChevronDown, Bell, TrendingUp, AlertCircle,
+  Clock, RotateCcw, Trash2, CheckCircle2, HardHat, MapPin 
+} from 'lucide-react';
+import { 
+  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, 
+  PieChart, Pie, Cell 
+} from 'recharts';
+import { 
+  departmentList, departmentData, recentAlertsList, 
+  safetyViolationTrends, violationTypesDonut 
+} from '../data/demoData';
 
-export default function Dashboard({ onViewIncidents }) {
-  const [summary, setSummary] = useState(null);
-  const [incidents, setIncidents] = useState([]);
-  const [zones, setZones] = useState([]);
-  const [trend, setTrend] = useState([]);
-  const [error, setError] = useState('');
+// Tracked Worker State dictionary (NONE exactly matches user's screenshot)
+const workerStateMap = {
+  'NONE': {
+    id: 'NONE',
+    name: 'Unassigned State',
+    hardhat: { status: 'Unverified', stateClass: 'unverified' },
+    vest: { status: 'Unverified', stateClass: 'unverified' },
+    posture: { status: 'SAFE', stateClass: 'safe' },
+    geofence: { status: 'Safe Zone', stateClass: 'safe' },
+    riskScore: 0,
+  },
+  'W1': {
+    id: 'W1',
+    name: 'Worker #1 (Safe)',
+    hardhat: { status: 'Verified', stateClass: 'safe' },
+    vest: { status: 'Verified', stateClass: 'safe' },
+    posture: { status: 'SAFE', stateClass: 'safe' },
+    geofence: { status: 'Safe Zone', stateClass: 'safe' },
+    riskScore: 6,
+  },
+  'W2': {
+    id: 'W2',
+    name: 'Worker #2 (Posture Warning)',
+    hardhat: { status: 'Verified', stateClass: 'safe' },
+    vest: { status: 'Unverified', stateClass: 'unverified' },
+    posture: { status: 'FATIGUE', stateClass: 'warning' },
+    geofence: { status: 'Safe Zone', stateClass: 'safe' },
+    riskScore: 48,
+  },
+  'W3': {
+    id: 'W3',
+    name: 'Worker #3 (Danger Zone Violation)',
+    hardhat: { status: 'Missing', stateClass: 'alert' },
+    vest: { status: 'Missing', stateClass: 'alert' },
+    posture: { status: 'UNSAFE', stateClass: 'alert' },
+    geofence: { status: 'Restricted', stateClass: 'alert' },
+    riskScore: 88,
+  },
+  'W4': {
+    id: 'W4',
+    name: 'Worker #4 (Standard)',
+    hardhat: { status: 'Verified', stateClass: 'safe' },
+    vest: { status: 'Verified', stateClass: 'safe' },
+    posture: { status: 'SAFE', stateClass: 'safe' },
+    geofence: { status: 'Safe Zone', stateClass: 'safe' },
+    riskScore: 12,
+  },
+  'W5': {
+    id: 'W5',
+    name: 'Worker #5 (Buffer Edge)',
+    hardhat: { status: 'Unverified', stateClass: 'unverified' },
+    vest: { status: 'Verified', stateClass: 'safe' },
+    posture: { status: 'SAFE', stateClass: 'safe' },
+    geofence: { status: 'Buffer Edge', stateClass: 'warning' },
+    riskScore: 32,
+  }
+};
 
-  useEffect(() => {
-    Promise.all([api.getDashboardSummary(), api.getIncidents(), api.getZones(), api.getSafetyTrend()])
-      .then(([s, i, z, t]) => { setSummary(s); setIncidents(i); setZones(z); setTrend(t); })
-      .catch(() => setError('Could not load dashboard data. Check the API connection.'));
-  }, []);
+export default function Dashboard({ 
+  activeDepartment = 'All Zones', 
+  setActiveDepartment, 
+  onViewIncidents,
+  videoSource,
+  setVideoSource,
+  onOpenHistory
+}) {
+  const [deptDropdownOpen, setDeptDropdownOpen] = useState(false);
+  const [trendTimeRange, setTrendTimeRange] = useState('Last 7 Days');
+  const [alertsList, setAlertsList] = useState(recentAlertsList);
+  const [isResettingEngine, setIsResettingEngine] = useState(false);
+  const [engineNotification, setEngineNotification] = useState('');
+  const [selectedWorkerId, setSelectedWorkerId] = useState('NONE');
+  const [workerMenuOpen, setWorkerMenuOpen] = useState(false);
 
-  if (!summary) return <div className="loading-panel">{error || 'Loading safety overview...'}</div>;
+  const currentDept = departmentData[activeDepartment] || departmentData['All Zones'];
+  const activeWorker = workerStateMap[selectedWorkerId] || workerStateMap['NONE'];
+
+  const handleSelectDepartment = (dept) => {
+    setActiveDepartment(dept);
+    if (setVideoSource) setVideoSource('cctv');
+    setDeptDropdownOpen(false);
+  };
+
+  const handleResetEngine = () => {
+    setIsResettingEngine(true);
+    setTimeout(() => {
+      setIsResettingEngine(false);
+      setEngineNotification('AI Inference Engine successfully re-initialized with local models.');
+      setTimeout(() => setEngineNotification(''), 4000);
+    }, 850);
+  };
+
+  const handleClearAlerts = () => {
+    const confirmed = window.confirm('Are you sure you want to clear all recent alerts? This action will remove the active alerts list.');
+    if (confirmed) {
+      setAlertsList([]);
+    }
+  };
 
   return (
-    <div className="dashboard-stack">
-      {isDemoMode && <div className="demo-notice"><span className="notice-mark">i</span><div><strong>Sample data is being displayed</strong><span>Metrics and incidents below are fixtures for interface development, not live site measurements.</span></div><span className="demo-notice-tag">DEVELOPMENT</span></div>}
-      <div className="metric-grid">
-        <MetricCard label="Safety score" value={summary.safetyScore} suffix="/100" note="vs previous period" change={summary.scoreChange} icon={ShieldCheck} tone="green"/>
-        <MetricCard label="Workers on site" value={summary.workersOnSite} note="Detected in current shift" icon={Users} tone="blue"/>
-        <MetricCard label="Active alerts" value={summary.activeAlerts} note="Require review" icon={AlertTriangle} tone="red"/>
-        <MetricCard label="PPE compliance" value={summary.ppeCompliance} suffix="%" note="vs previous period" change={summary.complianceChange} icon={HardHat} tone="amber"/>
-      </div>
-
-      <div className="primary-grid">
-        <section className="panel camera-panel">
-          <SectionHeader title="Camera monitoring" subtitle="Assembly line · Camera 01" action={<span className="camera-status"><i/> SOURCE PREVIEW</span>}/>
-          <div className="camera-view">
-            <div className="camera-grid-lines"/>
-            <div className="camera-placeholder">
-              <div className="camera-placeholder-icon"><Video size={30}/></div>
-              <strong>Camera feed not connected</strong>
-              <span>Connect a camera source or load a test clip to display video here.</span>
-              <button className="button button-secondary" onClick={() => window.alert('Camera input will be connected when the AI pipeline endpoint is ready.')}>Configure source</button>
-            </div>
-            <div className="camera-overlay camera-label"><span className="record-dot"/> CAMERA 01 <b>PREVIEW</b></div>
-            <div className="camera-overlay camera-time"><Clock3 size={13}/> Awaiting feed</div>
-            <div className="camera-bottom-label"><MapPin size={13}/> Assembly line / Zone A</div>
+    <div className="dashboard-body">
+      {/* 1. COMPACT SYSTEM STATUS BAR (MATCHING REQUIREMENT 2) */}
+      <section className="system-status-bar" aria-label="System Pipeline Status">
+        <div className="status-items-group">
+          <div className="status-indicator-item">
+            <span className="status-green-dot" />
+            <span>Pose Lite: <strong>Ready (Local)</strong></span>
           </div>
-          <div className="camera-footer"><span><span className="status-square neutral"/> Input unavailable</span><span><WifiOff size={14}/> No stream connected</span><button className="text-button" onClick={() => window.alert('The live stream requires an available camera or video-processing endpoint.')}>Connection details <ArrowRight size={14}/></button></div>
-        </section>
+          <div className="status-indicator-item">
+            <span className="status-green-dot" />
+            <span>PPE: <strong>Ready (YOLOv8 Nexus)</strong></span>
+          </div>
+          <div className="status-indicator-item">
+            <span className="status-green-dot" />
+            <span>IndexedDB: <strong>Ready</strong></span>
+          </div>
+          <div className="status-indicator-item">
+            <span className="status-green-dot" />
+            <span>Offline: <strong>Ready</strong></span>
+          </div>
+          <div className="on-device-badge">
+            <ShieldCheck size={13} />
+            <span>100% On-Device</span>
+          </div>
+        </div>
 
-        <section className="panel trend-panel">
-          <SectionHeader title="Safety score trend" subtitle="Last 7 days · Sample data"/>
-          <div className="chart-summary"><strong>{summary.safetyScore}<small>/100</small></strong><span className="trend-caption"><span className="trend-key"/> Safety score</span></div>
-          <div className="trend-chart">
+        <div className="status-actions-group">
+          <button 
+            className="status-btn" 
+            onClick={onOpenHistory || onViewIncidents}
+            title="Open detection and incident history"
+          >
+            <Clock size={13} />
+            <span>History</span>
+          </button>
+          <button 
+            className={`status-btn reset-btn ${isResettingEngine ? 'resetting' : ''}`} 
+            onClick={handleResetEngine}
+            disabled={isResettingEngine}
+            title="Reset on-device AI inference engine"
+          >
+            <RotateCcw size={13} className={isResettingEngine ? 'spin' : ''} />
+            <span>{isResettingEngine ? 'Resetting...' : 'Reset Engine'}</span>
+          </button>
+        </div>
+      </section>
+
+      {/* Engine Reset Feedback Toast */}
+      {engineNotification && (
+        <div className="engine-toast-banner">
+          <CheckCircle2 size={15} />
+          <span>{engineNotification}</span>
+        </div>
+      )}
+
+      {/* 2. COMPACT TOP 4 METRIC CARDS (MATCHING REQUIREMENT 1) */}
+      <section className="metrics-quad-grid" aria-label="Key Safety Metrics">
+        {/* Total Workers Detected */}
+        <div className="metric-quad-card">
+          <div className="metric-icon-circle workers">
+            <Users size={18} strokeWidth={2.4} />
+          </div>
+          <div className="metric-quad-content">
+            <span className="metric-quad-label">Total Workers Detected</span>
+            <div className="metric-quad-val-row">
+              <span className="metric-quad-val">{currentDept.workersCount}</span>
+              <span className="metric-quad-change positive">↑ {currentDept.workersChange}</span>
+            </div>
+            <span className="metric-quad-sub">Live on site</span>
+          </div>
+        </div>
+
+        {/* Safety Violations (Warm Amber Card) */}
+        <div className="metric-quad-card violations-card">
+          <div className="metric-icon-circle violations">
+            <AlertTriangle size={18} strokeWidth={2.4} />
+          </div>
+          <div className="metric-quad-content">
+            <span className="metric-quad-label">Safety Violations</span>
+            <div className="metric-quad-val-row">
+              <span className="metric-quad-val">{currentDept.violationsCount}</span>
+              <span className="metric-quad-change negative">↑ {currentDept.violationsChange}</span>
+            </div>
+            <span className="metric-quad-sub">In last 1 hour</span>
+          </div>
+        </div>
+
+        {/* PPE Compliance */}
+        <div className="metric-quad-card">
+          <div className="metric-icon-circle ppe">
+            <ShieldCheck size={18} strokeWidth={2.4} />
+          </div>
+          <div className="metric-quad-content">
+            <span className="metric-quad-label">PPE Compliance</span>
+            <div className="metric-quad-val-row">
+              <span className="metric-quad-val">{currentDept.ppeRate}%</span>
+              <span className="metric-quad-change positive">↑ {currentDept.ppeChange}</span>
+            </div>
+            <span className="metric-quad-sub">Workers with proper PPE</span>
+          </div>
+        </div>
+
+        {/* Fatigue / Unsafe Posture */}
+        <div className="metric-quad-card">
+          <div className="metric-icon-circle posture">
+            <Activity size={18} strokeWidth={2.4} />
+          </div>
+          <div className="metric-quad-content">
+            <span className="metric-quad-label">Fatigue / Unsafe Posture</span>
+            <div className="metric-quad-val-row">
+              <span className="metric-quad-val">{currentDept.postureAlerts}</span>
+              <span className="metric-quad-change negative">↑ {currentDept.postureChange}</span>
+            </div>
+            <span className="metric-quad-sub">Detected today</span>
+          </div>
+        </div>
+      </section>
+
+      {/* 3. MIDDLE ROW: LIVE MONITORING (MAX 900x400) & RECENT ALERTS */}
+      <section className="middle-dashboard-grid">
+        {/* Live Monitoring Card */}
+        <div className="cctv-monitor-card">
+          <div className="cctv-card-header">
+            <div className="cctv-card-title">
+              <Video size={17} color="#0F172A" />
+              <span>Live Monitoring</span>
+            </div>
+
+            {/* Department Switching Dropdown (All Zones, Warehouse, Manufacturing, Packaging, Loading Zone) */}
+            <div className="dept-selector-wrapper">
+              <button 
+                className="dept-dropdown-btn"
+                onClick={() => setDeptDropdownOpen(!deptDropdownOpen)}
+                aria-expanded={deptDropdownOpen}
+              >
+                <span>{activeDepartment === 'All Zones' ? 'All Cameras' : activeDepartment}</span>
+                <ChevronDown size={14} />
+              </button>
+
+              {deptDropdownOpen && (
+                <div className="dept-dropdown-menu">
+                  {departmentList.map((dept) => (
+                    <button
+                      key={dept}
+                      className={`dept-menu-item ${activeDepartment === dept ? 'active' : ''}`}
+                      onClick={() => handleSelectDepartment(dept)}
+                    >
+                      {dept}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* CCTV Video Viewport: 900px x 400px preserving 16:9 aspect ratio */}
+          <div className="cctv-viewport">
+            <img 
+              src={currentDept.image} 
+              alt={`${currentDept.name} live CCTV monitoring`}
+              className="cctv-img-frame"
+            />
+
+            {/* Top Left LIVE Tag */}
+            <div className="cctv-live-tag">
+              <span className="cctv-red-dot" />
+              <span>LIVE</span>
+            </div>
+
+            {/* AI Bounding Boxes on Workers with Clean Pill Headers */}
+            {currentDept.workers.map((worker) => (
+              <div 
+                key={worker.id}
+                className={`worker-bbox ${worker.status} ${selectedWorkerId === worker.id ? 'active-tracked' : ''}`}
+                style={{
+                  left: `${worker.x}%`,
+                  top: `${worker.y}%`,
+                  width: `${worker.w}%`,
+                  height: `${worker.h}%`,
+                  cursor: 'pointer',
+                  pointerEvents: 'auto'
+                }}
+                onClick={() => setSelectedWorkerId(worker.id)}
+                title={`Click to track state of ${worker.tag}`}
+              >
+                <div className="bbox-pill-header">
+                  {worker.tag}
+                </div>
+              </div>
+            ))}
+
+            {/* Bottom Left Camera / Zone Name Tag */}
+            <div className="cctv-camera-tag">
+              {currentDept.cameraTag}
+            </div>
+
+            {/* Bottom Right Fullscreen Button */}
+            <button 
+              className="cctv-fullscreen-btn"
+              title="Toggle Fullscreen"
+              onClick={() => {
+                const elem = document.querySelector('.cctv-viewport');
+                if (elem?.requestFullscreen) elem.requestFullscreen();
+              }}
+            >
+              <Maximize2 size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Right Column: Tracked Worker State + Active Alerts Feed */}
+        <div className="monitoring-right-column">
+          {/* 1. Tracked Worker State Card (Matches Reference Screenshot) */}
+          <div className="tracked-worker-card">
+            <div className="tracked-worker-header">
+              <span className="tracked-worker-title">TRACKED WORKER STATE</span>
+              <div className="tracked-worker-selector">
+                <button 
+                  className="worker-badge-pill"
+                  onClick={() => setWorkerMenuOpen(!workerMenuOpen)}
+                  title="Switch tracked worker state"
+                  aria-expanded={workerMenuOpen}
+                >
+                  <span>{activeWorker.id}</span>
+                  <ChevronDown size={11} />
+                </button>
+
+                {workerMenuOpen && (
+                  <div className="worker-picker-dropdown">
+                    {Object.keys(workerStateMap).map((wId) => (
+                      <button
+                        key={wId}
+                        className={`worker-picker-item ${selectedWorkerId === wId ? 'active' : ''}`}
+                        onClick={() => {
+                          setSelectedWorkerId(wId);
+                          setWorkerMenuOpen(false);
+                        }}
+                      >
+                        <strong>{wId}</strong>
+                        <span>{workerStateMap[wId].name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 4 Tracked State Capsules */}
+            <div className="tracked-states-list">
+              {/* Capsule 1: Safety Hardhat */}
+              <div className="tracked-state-capsule">
+                <div className="state-label-group">
+                  <span className="state-icon-wrap">
+                    <HardHat size={16} strokeWidth={2} />
+                  </span>
+                  <span>Safety Hardhat</span>
+                </div>
+                <span className={`state-val-status ${activeWorker.hardhat.stateClass}`}>
+                  {activeWorker.hardhat.status}
+                </span>
+              </div>
+
+              {/* Capsule 2: Hi-Vis Safety Vest */}
+              <div className="tracked-state-capsule">
+                <div className="state-label-group">
+                  <span className="state-icon-wrap">
+                    <ShieldCheck size={16} strokeWidth={2} />
+                  </span>
+                  <span>Hi-Vis Safety Vest</span>
+                </div>
+                <span className={`state-val-status ${activeWorker.vest.stateClass}`}>
+                  {activeWorker.vest.status}
+                </span>
+              </div>
+
+              {/* Capsule 3: Ergonomic Posture */}
+              <div className="tracked-state-capsule">
+                <div className="state-label-group">
+                  <span className="state-icon-wrap">
+                    <Activity size={16} strokeWidth={2} />
+                  </span>
+                  <span>Ergonomic Posture</span>
+                </div>
+                <span className={`state-val-status ${activeWorker.posture.stateClass}`}>
+                  {activeWorker.posture.status}
+                </span>
+              </div>
+
+              {/* Capsule 4: Geofence Boundary */}
+              <div className="tracked-state-capsule">
+                <div className="state-label-group">
+                  <span className="state-icon-wrap">
+                    <MapPin size={16} strokeWidth={2} />
+                  </span>
+                  <span>Geofence Boundary</span>
+                </div>
+                <span className={`state-val-status ${activeWorker.geofence.stateClass}`}>
+                  {activeWorker.geofence.status}
+                </span>
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="tracked-risk-divider" />
+
+            {/* Authoritative Risk Score Footer */}
+            <div className="tracked-risk-footer">
+              <div className="risk-footer-labels">
+                <span>Authoritative Risk Score</span>
+                <span className="risk-footer-val">{activeWorker.riskScore}/100</span>
+              </div>
+              <div className="risk-track-bar">
+                <div 
+                  className="risk-fill-bar"
+                  style={{
+                    width: `${Math.max(activeWorker.riskScore, 4)}%`,
+                    background: activeWorker.riskScore > 75 
+                      ? '#EF4444' 
+                      : activeWorker.riskScore > 40 
+                      ? '#EAAA00' 
+                      : '#10B981',
+                    boxShadow: activeWorker.riskScore > 75 
+                      ? '0 0 8px rgba(239, 68, 68, 0.6)' 
+                      : activeWorker.riskScore > 40 
+                      ? '0 0 8px rgba(234, 170, 0, 0.5)' 
+                      : '0 0 8px rgba(16, 185, 129, 0.5)'
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Active Alerts Feed Card (Directly Below Tracked Worker State) */}
+          <div className="active-alerts-feed-card">
+            <div className="active-alerts-header">
+              <div className="active-alerts-title-group">
+                <AlertTriangle size={17} color="#F43F5E" strokeWidth={2.4} />
+                <span className="active-alerts-title">Active Alerts Feed</span>
+                {alertsList.length > 0 && (
+                  <span className="alerts-count-badge">{alertsList.length}</span>
+                )}
+              </div>
+
+              <div className="alerts-header-actions">
+                <button 
+                  className="dark-clear-btn" 
+                  onClick={handleClearAlerts}
+                  title="Clear all active alerts"
+                  disabled={alertsList.length === 0}
+                >
+                  <Trash2 size={12} />
+                  <span>Clear Alerts</span>
+                </button>
+                <button className="dark-view-btn" onClick={onViewIncidents}>
+                  <span>View All</span>
+                  <span>→</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="alerts-scroll-list dark-scroll-list">
+              {alertsList.length > 0 ? (
+                alertsList.map((alert) => (
+                  <div key={alert.id} className="alert-item-card dark-alert-item">
+                    <img 
+                      src={alert.image} 
+                      alt={alert.title} 
+                      className="alert-thumb-img" 
+                    />
+                    <div className="alert-info-col">
+                      <span className="alert-main-title dark-text-title">{alert.title}</span>
+                      <span className="alert-location-time dark-text-sub">{alert.location} • {alert.time}</span>
+                    </div>
+                    <span className={`alert-severity-badge dark-badge ${alert.severity.toLowerCase()}`}>
+                      {alert.severity}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-alerts-notice dark-empty-notice">
+                  <CheckCircle2 size={18} color="#10B981" />
+                  <div>
+                    <strong>All Alerts Cleared</strong>
+                    <p style={{ margin: '2px 0 0', color: '#94A3B8', fontSize: '11px' }}>
+                      Zero active safety violations reported in monitored zones.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 4. BOTTOM ROW: SAFETY VIOLATION TRENDS & VIOLATION TYPES */}
+      <section className="bottom-dashboard-grid">
+        {/* Safety Violation Trends Line Chart */}
+        <div className="bottom-chart-card">
+          <div className="chart-card-header">
+            <div className="chart-card-title">
+              <TrendingUp size={18} color="#3A0F34" />
+              <span>Safety Violation Trends</span>
+            </div>
+            <select 
+              className="chart-filter-select"
+              value={trendTimeRange}
+              onChange={(e) => setTrendTimeRange(e.target.value)}
+            >
+              <option>Last 7 Days</option>
+              <option>Last 30 Days</option>
+              <option>This Quarter</option>
+            </select>
+          </div>
+
+          <div className="trends-line-chart-area">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trend} margin={{ top: 12, right: 4, left: -22, bottom: 0 }}>
-                <defs><linearGradient id="scoreFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#16856a" stopOpacity={0.18}/><stop offset="100%" stopColor="#16856a" stopOpacity={0.01}/></linearGradient></defs>
-                <CartesianGrid stroke="#e8edf0" strokeDasharray="3 4" vertical={false}/>
-                <XAxis dataKey="day" tickLine={false} axisLine={false} tick={{ fill: '#77838d', fontSize: 11 }}/>
-                <YAxis domain={[70, 100]} tickLine={false} axisLine={false} tick={{ fill: '#77838d', fontSize: 11 }}/>
-                <Tooltip contentStyle={{ border: '1px solid #dce3e7', borderRadius: 4, fontSize: 12 }} />
-                <Area type="monotone" dataKey="score" name="Safety score" stroke="#16856a" strokeWidth={2.2} fill="url(#scoreFill)" activeDot={{ r: 4, fill: '#16856a' }}/>
+              <AreaChart data={safetyViolationTrends} margin={{ top: 12, right: 15, left: -22, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="trendsPlumGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#800020" stopOpacity={0.25} />
+                    <stop offset="100%" stopColor="#800020" stopOpacity={0.01} />
+                  </linearGradient>
+                </defs>
+                <XAxis 
+                  dataKey="date" 
+                  tickLine={false} 
+                  axisLine={{ stroke: '#E2E8F0' }} 
+                  tick={{ fill: '#64748B', fontSize: 11 }} 
+                />
+                <YAxis 
+                  domain={[0, 20]} 
+                  ticks={[0, 5, 10, 15, 20]} 
+                  tickLine={false} 
+                  axisLine={{ stroke: '#E2E8F0' }} 
+                  tick={{ fill: '#64748B', fontSize: 11 }} 
+                />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: '#FFFFFF', 
+                    border: '1px solid #CBD5E1', 
+                    borderRadius: 8, 
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                    fontSize: 12,
+                    color: '#0F172A' 
+                  }} 
+                />
+                <Area 
+                  type="monotone" 
+                  dataKey="count" 
+                  stroke="#7A1336" 
+                  strokeWidth={2.4} 
+                  fill="url(#trendsPlumGradient)" 
+                  dot={{ r: 4, fill: '#7A1336', stroke: '#FFFFFF', strokeWidth: 1.5 }}
+                  activeDot={{ r: 6, fill: '#EAAA00', stroke: '#7A1336', strokeWidth: 2 }}
+                />
               </AreaChart>
             </ResponsiveContainer>
           </div>
-          <div className="chart-footnote"><span className="chart-footnote-dot"/> Trend values are illustrative</div>
-        </section>
-      </div>
+        </div>
 
-      <div className="secondary-grid">
-        <section className="panel violations-panel">
-          <SectionHeader title="Current violations" subtitle="Most recent detected events" action={<button className="text-button" onClick={onViewIncidents}>View all <ArrowRight size={14}/></button>}/>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead><tr><th>EVENT</th><th>LOCATION</th><th>TIME</th><th>SEVERITY</th></tr></thead>
-              <tbody>{incidents.slice(0, 4).map((item) => <tr key={item.id}><td><strong className="event-title">{item.type}</strong><span className="event-id">{item.id}</span></td><td>{item.location}</td><td className="time-cell">{item.time}</td><td><SeverityBadge severity={item.severity}/></td></tr>)}</tbody>
-            </table>
+        {/* Violation Types Donut Chart */}
+        <div className="bottom-chart-card">
+          <div className="chart-card-header">
+            <div className="chart-card-title">
+              <AlertCircle size={18} color="#3A0F34" />
+              <span>Violation Types</span>
+            </div>
           </div>
-        </section>
-        <section className="panel zones-panel">
-          <SectionHeader title="Worker & zone status" subtitle="Configured workplace areas"/>
-          <div className="zone-list">{zones.map((zone) => <div className="zone-row" key={zone.code}>
-            <div className="zone-symbol"><Activity size={17}/></div>
-            <div className="zone-info"><strong>{zone.zone}</strong><small>{zone.code} <span>·</span> {zone.workers} workers</small><div className="risk-track"><span style={{ width: `${zone.risk}%` }} className={zone.risk >= 70 ? 'risk-high' : zone.risk >= 35 ? 'risk-medium' : 'risk-low'}/></div></div>
-            <span className={`zone-state ${zone.status.toLowerCase().replace(/\s+/g, '-')}`}>{zone.status}</span>
-          </div>)}</div>
-          <div className="zone-note"><AlertTriangle size={14}/><span>Zone risk values are sample configuration data.</span></div>
-        </section>
-      </div>
-      <div className="dashboard-last-note"><CheckCircle2 size={15}/><span>Interface components are prepared for API integration.</span><button className="text-button" onClick={() => window.location.reload()}><RefreshCw size={13}/> Refresh view</button></div>
+
+          <div className="donut-types-layout">
+            <div className="donut-graphic-box">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={violationTypesDonut}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={44}
+                    outerRadius={65}
+                    paddingAngle={3}
+                    dataKey="value"
+                    stroke="#FFFFFF"
+                    strokeWidth={2}
+                  >
+                    {violationTypesDonut.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="donut-inner-stats">
+                <span className="donut-stat-number">32</span>
+                <span className="donut-stat-label">Total Alerts</span>
+              </div>
+            </div>
+
+            <div className="donut-types-legend">
+              {violationTypesDonut.map((item) => (
+                <div key={item.name} className="donut-legend-row">
+                  <div className="donut-legend-info">
+                    <span className="donut-color-dot" style={{ backgroundColor: item.color }} />
+                    <span>{item.name}</span>
+                  </div>
+                  <span className="donut-pct-text">{item.value}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

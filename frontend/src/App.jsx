@@ -1,79 +1,211 @@
-import { useState } from 'react';
-import { Activity, AlertTriangle, BarChart3, Bell, Camera, ChevronDown, CircleHelp, ClipboardList, HardHat, LayoutDashboard, Menu, Search, Settings, ShieldCheck, Users, X } from 'lucide-react';
+import React, { useState } from 'react';
+import { 
+  HardHat, LayoutDashboard, Video, Bell, BarChart3, 
+  History, Settings, Camera, Globe, Film, Square, 
+  Play, Search, ChevronDown 
+} from 'lucide-react';
 import Dashboard from './pages/Dashboard.jsx';
 import Incidents from './pages/Incidents.jsx';
 import Analytics from './pages/Analytics.jsx';
-
-const navItems = [
-  { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
-  { id: 'incidents', label: 'Incidents', icon: ClipboardList, count: '3' },
-  { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-];
+import { departmentList } from './data/demoData';
 
 export default function App() {
-  const [page, setPage] = useState('dashboard');
-  const [mobileNav, setMobileNav] = useState(false);
+  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [videoSource, setVideoSource] = useState('cctv'); // Default to CCTV as requested
+  const [activeDepartment, setActiveDepartment] = useState('All Zones');
+  const [isRecording, setIsRecording] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const titles = {
-    dashboard: ['Safety overview', 'Monitor current site conditions and active safety events.'],
-    incidents: ['Incident management', 'Review, prioritize, and track reported safety events.'],
-    analytics: ['Safety analytics', 'Review trends across the selected demo reporting period.'],
-  };
+  const navItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'monitoring', label: 'Live Monitoring', icon: Video },
+    { id: 'alerts', label: 'Alerts', icon: Bell, badge: '5' },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'history', label: 'Video History', icon: History },
+    { id: 'settings', label: 'Settings', icon: Settings },
+  ];
 
   return (
-    <div className="app-shell">
-      <aside className={`sidebar ${mobileNav ? 'sidebar-open' : ''}`}>
-        <div className="brand">
-          <div className="brand-mark"><ShieldCheck size={22} strokeWidth={2.1} /></div>
-          <div className="brand-copy"><strong>ErgoGuard<span> AI</span></strong><small>WORKPLACE SAFETY</small></div>
-          <button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="Close menu"><X size={18}/></button>
+    <div className="app-layout">
+      {/* 1. SIDEBAR (DEEP PLUM #3A0F34) */}
+      <aside className="app-sidebar">
+        {/* Brand Logo & Tagline */}
+        <div className="sidebar-logo">
+          <div className="logo-shield-badge">
+            <HardHat size={24} strokeWidth={2.4} />
+          </div>
+          <div className="logo-copy">
+            <span className="logo-title">ErgoGuard AI</span>
+            <span className="logo-tagline">SAFE PEOPLE SAFER WORKPLACES</span>
+          </div>
         </div>
-        <div className="site-selector">
-          <div className="site-dot" />
-          <div><small>ACTIVE SITE</small><strong>Plant 01 · Assembly</strong></div>
-          <ChevronDown size={16} className="muted-icon" />
-        </div>
-        <div className="nav-label">MONITORING</div>
-        <nav className="main-nav" aria-label="Main navigation">
-          {navItems.map(({ id, label, icon: Icon, count }) => (
-            <button key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => { setPage(id); setMobileNav(false); }}>
-              <Icon size={18} strokeWidth={1.8}/><span>{label}</span>{count && <span className="nav-count">{count}</span>}
+
+        {/* Navigation Items */}
+        <nav className="sidebar-nav" aria-label="Main Navigation">
+          {navItems.map(({ id, label, icon: Icon, badge }) => (
+            <button
+              key={id}
+              className={`sidebar-nav-item ${currentPage === id ? 'active' : ''}`}
+              onClick={() => setCurrentPage(id)}
+            >
+              <Icon size={18} strokeWidth={currentPage === id ? 2.5 : 2} />
+              <span>{label}</span>
+              {badge && <span className="sidebar-badge-count">{badge}</span>}
             </button>
           ))}
         </nav>
-        <div className="nav-label secondary-label">SYSTEM</div>
-        <button className="nav-item" onClick={() => window.alert('Camera settings will be available when the camera API is connected.')}><Camera size={18}/><span>Camera sources</span></button>
-        <button className="nav-item" onClick={() => window.alert('Settings will be available in a later build.')}><Settings size={18}/><span>Settings</span></button>
-        <div className="sidebar-bottom">
-          <div className="connection-card"><span className="connection-indicator" /><div><strong>Demo environment</strong><small>Using sample JSON data</small></div></div>
-          <div className="sidebar-footer"><CircleHelp size={15}/><span>Help & documentation</span></div>
-          <div className="user-card"><div className="user-avatar">SO</div><div className="user-details"><strong>Safety Operator</strong><small>Site monitoring</small></div><button className="icon-button" aria-label="User options" onClick={() => window.alert('User account integration is not configured yet.')}><ChevronDown size={16}/></button></div>
+
+        {/* Video Source Options */}
+        <div className="sidebar-section-title">Video Source</div>
+        <div className="video-source-panel">
+          {/* Webcam Option */}
+          <button 
+            className={`video-source-btn ${videoSource === 'webcam' ? 'active' : ''}`}
+            onClick={() => setVideoSource('webcam')}
+          >
+            <Camera size={16} />
+            <span>Webcam</span>
+          </button>
+
+          {/* IP CCTV Option with Department Switching Options */}
+          <button 
+            className={`video-source-btn ${videoSource === 'cctv' ? 'active' : ''}`}
+            onClick={() => setVideoSource('cctv')}
+          >
+            <Globe size={16} />
+            <span>IP CCTV</span>
+          </button>
+
+          {/* When IP CCTV is selected, show the Department switching options */}
+          {videoSource === 'cctv' && (
+            <div className="sidebar-department-sublist">
+              {departmentList.map((dept) => (
+                <button
+                  key={dept}
+                  className={`dept-sub-btn ${activeDepartment === dept ? 'active' : ''}`}
+                  onClick={() => setActiveDepartment(dept)}
+                >
+                  • {dept}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Video File Option */}
+          <button 
+            className={`video-source-btn ${videoSource === 'file' ? 'active' : ''}`}
+            onClick={() => setVideoSource('file')}
+          >
+            <Film size={16} />
+            <span>Video File</span>
+          </button>
+
+          {/* Stop Recording Button: Located JUST BELOW the Video File option as requested */}
+          <button 
+            className="stop-recording-btn"
+            onClick={() => setIsRecording(!isRecording)}
+            style={!isRecording ? { background: 'rgba(16, 185, 129, 0.2)', borderColor: '#10B981', color: '#6ee7b7' } : {}}
+          >
+            {isRecording ? (
+              <>
+                <Square size={13} fill="currentColor" />
+                <span>Stop Recording</span>
+              </>
+            ) : (
+              <>
+                <Play size={13} fill="currentColor" />
+                <span>Start Recording</span>
+              </>
+            )}
+          </button>
         </div>
       </aside>
 
-      {mobileNav && <button className="mobile-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
+      {/* 2. MAIN VIEWPORT */}
+      <div className="main-content-area">
+        {/* Top Header */}
+        <header className="main-header">
+          {/* Search bar matching reference */}
+          <div className="header-search-box">
+            <Search size={16} color="#94A3B8" />
+            <input 
+              type="text" 
+              placeholder="Search camera, alerts..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
 
-      <main className="main-area">
-        <header className="topbar">
-          <button className="icon-button mobile-menu" onClick={() => setMobileNav(true)} aria-label="Open menu"><Menu size={20}/></button>
-          <div className="breadcrumb"><span>Operations</span><span className="breadcrumb-slash">/</span><strong>{titles[page][0]}</strong></div>
-          <div className="topbar-actions">
-            <div className="demo-badge"><span /> DEMO DATA</div>
-            <button className="icon-button top-search" aria-label="Search" onClick={() => window.alert('Search will be enabled after API integration.')}><Search size={18}/></button>
-            <button className="icon-button notification-button" aria-label="Notifications" onClick={() => setPage('incidents')}><Bell size={18}/><i /></button>
+          {/* Right Header: Alerts & Safety Manager Profile */}
+          <div className="header-actions">
+            <button 
+              className="header-alert-btn" 
+              title="Recent Alerts"
+              onClick={() => setCurrentPage('alerts')}
+            >
+              <Bell size={18} />
+              <span className="header-alert-dot" />
+            </button>
+
+            <div className="header-user-badge" onClick={() => setCurrentPage('settings')}>
+              <div className="user-avatar-circle">
+                SM
+              </div>
+              <span className="user-title-text">
+                Safety Manager <ChevronDown size={14} color="#64748B" />
+              </span>
+            </div>
           </div>
         </header>
-        <section className="page-content">
-          <div className="page-heading">
-            <div><div className="eyebrow">SAFETY OPERATIONS <span className="eyebrow-line" /></div><h1>{titles[page][0]}</h1><p>{titles[page][1]}</p></div>
-            <div className="heading-meta"><span className="live-dot" /> Sample environment <span className="meta-divider" /> <span>Plant 01</span></div>
-          </div>
-          {page === 'dashboard' && <Dashboard onViewIncidents={() => setPage('incidents')} />}
-          {page === 'incidents' && <Incidents />}
-          {page === 'analytics' && <Analytics />}
-          <footer className="page-footer"><span>ErgoGuard AI <b>·</b> Workplace safety monitoring</span><span>Prototype interface <b>·</b> Sample data only</span></footer>
-        </section>
-      </main>
+
+        {/* Page Content */}
+        <main>
+          {(currentPage === 'dashboard' || currentPage === 'monitoring') && (
+            <Dashboard 
+              activeDepartment={activeDepartment}
+              setActiveDepartment={setActiveDepartment}
+              onViewIncidents={() => setCurrentPage('alerts')}
+              videoSource={videoSource}
+              setVideoSource={setVideoSource}
+              onOpenHistory={() => setCurrentPage('history')}
+            />
+          )}
+
+          {currentPage === 'alerts' && (
+            <div style={{ padding: '24px 28px' }}>
+              <Incidents />
+            </div>
+          )}
+
+          {currentPage === 'analytics' && (
+            <div style={{ padding: '24px 28px' }}>
+              <Analytics />
+            </div>
+          )}
+
+          {currentPage === 'history' && (
+            <div style={{ padding: '32px 28px' }}>
+              <div style={{ background: '#FFFFFF', padding: 28, borderRadius: 14, border: '1px solid #E2E8F0' }}>
+                <h2 style={{ color: '#3A0F34', fontSize: 18, marginBottom: 8 }}>Archived Video History</h2>
+                <p style={{ color: '#64748B', fontSize: 13 }}>
+                  Recorded safety incidents and full CCTV stream logs for Plant 01 are retained for 90 days.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {currentPage === 'settings' && (
+            <div style={{ padding: '32px 28px' }}>
+              <div style={{ background: '#FFFFFF', padding: 28, borderRadius: 14, border: '1px solid #E2E8F0' }}>
+                <h2 style={{ color: '#3A0F34', fontSize: 18, marginBottom: 8 }}>System Configurations</h2>
+                <p style={{ color: '#64748B', fontSize: 13 }}>
+                  Configure IP CCTV RTSP endpoints, AI threshold sensitivities, and automated alert dispatch webhooks.
+                </p>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
     </div>
   );
 }

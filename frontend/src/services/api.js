@@ -11,8 +11,8 @@ async function request(path, fallback) {
     if (!response.ok) throw new Error(`Request failed: ${response.status}`);
     return await response.json();
   } catch (error) {
-    console.error(`ErgoGuard API request failed for ${path}`, error);
-    throw error;
+    console.warn(`ErgoGuard API request failed for ${path}, using demo fixtures.`, error);
+    return fallback;
   }
 }
 

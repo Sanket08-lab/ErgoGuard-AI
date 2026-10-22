@@ -1,3 +1,4 @@
+import React from 'react';
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react';
 
 export default function MetricCard({ label, value, suffix, note, change, icon: Icon, tone = 'blue' }) {

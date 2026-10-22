@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowUpRight, HardHat, ShieldCheck, TrendingUp } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { api } from '../services/api';
